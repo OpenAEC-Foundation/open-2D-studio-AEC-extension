@@ -1,0 +1,12 @@
+{
+  "id": "aec",
+  "name": "AEC (Architecture, Engineering, Construction)",
+  "version": "0.1.0",
+  "minAppVersion": "0.31.0",
+  "author": "OpenAEC Foundation",
+  "description": "Structural engineering: beams, walls, slabs, piles, grids, levels, sections, spaces, and IFC export.",
+  "category": "Structure",
+  "main": "main.js",
+  "permissions": ["commands", "ribbon", "events"],
+  "tags": ["aec", "structural", "ifc", "beam", "wall", "slab", "pile"]
+}

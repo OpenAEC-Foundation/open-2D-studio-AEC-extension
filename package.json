@@ -1,0 +1,19 @@
+{
+  "name": "open-2d-studio-aec-extension",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "deploy": "node scripts/deploy.mjs",
+    "package": "npm run build && node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "@types/react": "^19.2.14",
+    "@vitejs/plugin-react": "^5.1.4",
+    "lucide-react": "^0.577.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}
