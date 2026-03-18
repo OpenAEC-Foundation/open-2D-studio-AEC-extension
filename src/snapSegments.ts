@@ -22,6 +22,28 @@ function getPileSegments(): Segment[] {
   return [];
 }
 
+function getColumnSegments(shape: any): Segment[] {
+  const col = shape;
+  const halfW = col.width / 2;
+  const halfD = col.depth / 2;
+  const cos = Math.cos(col.rotation || 0);
+  const sin = Math.sin(col.rotation || 0);
+  const transform = (lx: number, ly: number) => ({
+    x: col.position.x + lx * cos - ly * sin,
+    y: col.position.y + lx * sin + ly * cos,
+  });
+  const c0 = transform(-halfW, -halfD);
+  const c1 = transform(halfW, -halfD);
+  const c2 = transform(halfW, halfD);
+  const c3 = transform(-halfW, halfD);
+  return [
+    { start: c0, end: c1 },
+    { start: c1, end: c2 },
+    { start: c2, end: c3 },
+    { start: c3, end: c0 },
+  ];
+}
+
 function getCptSegments(): Segment[] {
   return [];
 }
@@ -89,10 +111,31 @@ function getSectionCalloutSegments(shape: any): Segment[] {
   return [{ start: sc.start, end: sc.end }];
 }
 
+function getSlabOpeningSegments(shape: any): Segment[] {
+  const soPts = shape.points;
+  const segs: Segment[] = [];
+  for (let i = 0; i < soPts.length; i++) {
+    const j = (i + 1) % soPts.length;
+    segs.push({ start: soPts[i], end: soPts[j] });
+  }
+  return segs;
+}
+
+function getWallOpeningSegments(): Segment[] {
+  return [];
+}
+
+function getRebarSegments(shape: any): Segment[] {
+  if (shape.viewMode === 'longitudinal' && shape.endPoint) {
+    return [{ start: shape.position, end: shape.endPoint }];
+  }
+  return [];
+}
+
 const SHAPE_TYPES = [
-  'beam', 'gridline', 'level', 'pile', 'cpt', 'spot-elevation',
-  'foundation-zone', 'wall', 'slab', 'puntniveau', 'space',
-  'plate-system', 'section-callout',
+  'beam', 'gridline', 'level', 'pile', 'column', 'cpt', 'spot-elevation',
+  'foundation-zone', 'wall', 'wall-opening', 'slab', 'slab-opening', 'puntniveau', 'space',
+  'plate-system', 'section-callout', 'rebar',
 ] as const;
 
 const handlers: Record<string, (shape: any) => Segment[]> = {
@@ -100,15 +143,19 @@ const handlers: Record<string, (shape: any) => Segment[]> = {
   'gridline': getGridlineSegments,
   'level': getLevelSegments,
   'pile': getPileSegments,
+  'column': getColumnSegments,
   'cpt': getCptSegments,
   'spot-elevation': getSpotElevationSegments,
   'foundation-zone': getFoundationZoneSegments,
   'wall': getWallSegments,
+  'wall-opening': getWallOpeningSegments,
   'slab': getSlabSegments,
+  'slab-opening': getSlabOpeningSegments,
   'puntniveau': getPuntniveauSegments,
   'space': getSpaceSegments,
   'plate-system': getPlateSystemSegments,
   'section-callout': getSectionCalloutSegments,
+  'rebar': getRebarSegments,
 };
 
 export function registerSnapSegments(): void {

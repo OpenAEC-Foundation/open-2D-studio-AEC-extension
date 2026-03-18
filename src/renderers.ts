@@ -13,6 +13,8 @@ import type {
   PileShape,
   WallShape,
   SlabShape,
+  SlabOpeningShape,
+  SlabLabelShape,
   WallSystemType,
   SectionCalloutShape,
   SpaceShape,
@@ -20,6 +22,8 @@ import type {
   SpotElevationShape,
   CPTShape,
   FoundationZoneShape,
+  ColumnShape,
+  RebarShape,
   ProfileType,
   ParameterValues,
 } from 'open-2d-studio';
@@ -32,6 +36,7 @@ import {
   CAD_DEFAULT_FONT,
   DEFAULT_MATERIAL_HATCH_SETTINGS,
   LINE_DASH_REFERENCE_SCALE,
+  STRUCTURAL_FLOOR_TYPES,
   formatNumber,
   formatElevation,
   useAppStore,
@@ -159,11 +164,13 @@ function computeWallCorners(shape: WallShape): { x: number; y: number }[] {
   let leftThick: number;
   let rightThick: number;
   if (justification === 'left') {
-    leftThick = thickness;
-    rightThick = 0;
-  } else if (justification === 'right') {
+    // "Left justified" = left face is on the draw line, wall extends to the right
     leftThick = 0;
     rightThick = thickness;
+  } else if (justification === 'right') {
+    // "Right justified" = right face is on the draw line, wall extends to the left
+    leftThick = thickness;
+    rightThick = 0;
   } else {
     leftThick = halfThick;
     rightThick = halfThick;
@@ -592,9 +599,11 @@ function drawGridline(renderCtx: ShapeRenderContext, shape: GridlineShape, inver
   const dy = Math.sin(angle);
 
   const origLineWidth = ctx.lineWidth;
+  const scaledLineWidth = origLineWidth * scaleFactor;
 
   const ext = renderCtx.gridlineExtension * scaleFactor;
   ctx.save();
+  ctx.lineWidth = scaledLineWidth;
   ctx.setLineDash(renderCtx.getLineDash('dashdot'));
   ctx.beginPath();
   ctx.moveTo(start.x - dx * ext, start.y - dy * ext);
@@ -603,7 +612,7 @@ function drawGridline(renderCtx: ShapeRenderContext, shape: GridlineShape, inver
   ctx.restore();
 
   ctx.setLineDash([]);
-  ctx.lineWidth = origLineWidth;
+  ctx.lineWidth = scaledLineWidth;
 
   let textColor = shape.style.strokeColor;
   if (invertColors && textColor === '#ffffff') {
@@ -1135,6 +1144,193 @@ function drawCPT(renderCtx: ShapeRenderContext, shape: CPTShape, invertColors: b
     ctx.fillText('W', position.x, labelY);
     ctx.restore();
   }
+
+  // Draw depth/qc profile graph when CPT data is present
+  if (shape.cptData && shape.cptData.depth.length > 0) {
+    drawCPTProfileGraph(ctx, shape, sf, invertColors);
+  }
+}
+
+/**
+ * Draw a mini depth/qc (and optionally fs) profile graph next to the CPT marker.
+ *
+ * The graph is drawn to the right of the marker position:
+ * - Y axis = depth (increasing downward)
+ * - X axis = cone resistance qc (MPa), with optional fs overlay
+ * - Includes axis labels and a depth scale
+ */
+function drawCPTProfileGraph(
+  ctx: CanvasRenderingContext2D,
+  shape: CPTShape,
+  sf: number,
+  invertColors: boolean,
+): void {
+  const data = shape.cptData!;
+  const { position, markerSize } = shape;
+  const ms = (markerSize || 300) * sf;
+
+  // Graph dimensions in drawing units (scaled)
+  const graphWidth = ms * 3;
+  const graphHeight = ms * 5;
+  const graphLeft = position.x + ms * 0.8;
+  const graphTop = position.y - ms * 0.4;
+  const graphRight = graphLeft + graphWidth;
+  const graphBottom = graphTop + graphHeight;
+
+  // Data ranges
+  const minDepth = Math.min(...data.depth);
+  const maxDepth = Math.max(...data.depth);
+  const maxQc = Math.max(...data.qc);
+  const maxFs = data.fs.length > 0 ? Math.max(...data.fs) : 0;
+  const rfArray = data.rf as number[] | undefined;
+  const maxRf = rfArray && rfArray.length > 0 ? Math.max(...rfArray) : 0;
+  const depthRange = maxDepth - minDepth || 1;
+  const qcRange = maxQc || 1;
+  const rfRange = maxRf || 1;
+
+  // Mapping functions
+  const mapDepthToY = (d: number) => graphTop + ((d - minDepth) / depthRange) * graphHeight;
+  const mapQcToX = (q: number) => graphLeft + (q / qcRange) * graphWidth;
+  const mapFsToX = (f: number) => graphLeft + (f / qcRange) * graphWidth;
+  const mapRfToX = (r: number) => graphLeft + (r / rfRange) * graphWidth;
+
+  const lineWidth = ms * 0.02;
+  const axisColor = invertColors ? '#666666' : '#888888';
+  const qcColor = invertColors ? '#0055aa' : '#4499ff';
+  const fsColor = invertColors ? '#aa5500' : '#ff9944';
+  const rfColor = invertColors ? '#008844' : '#44cc88';
+
+  ctx.save();
+
+  // Draw graph background (semi-transparent)
+  ctx.fillStyle = invertColors ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+  ctx.fillRect(graphLeft, graphTop, graphWidth, graphHeight);
+
+  // Draw axes
+  ctx.strokeStyle = axisColor;
+  ctx.lineWidth = lineWidth;
+  ctx.beginPath();
+  // Y axis (left edge)
+  ctx.moveTo(graphLeft, graphTop);
+  ctx.lineTo(graphLeft, graphBottom);
+  // X axis (top edge)
+  ctx.moveTo(graphLeft, graphTop);
+  ctx.lineTo(graphRight, graphTop);
+  ctx.stroke();
+
+  // Draw depth grid lines and labels
+  const axisFontSize = ms * 0.2;
+  ctx.font = `${axisFontSize}px ${CAD_DEFAULT_FONT}`;
+  ctx.fillStyle = axisColor;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'right';
+
+  const depthStep = depthRange > 20 ? 5 : depthRange > 10 ? 2 : 1;
+  const firstDepthTick = Math.ceil(minDepth / depthStep) * depthStep;
+  for (let d = firstDepthTick; d <= maxDepth; d += depthStep) {
+    const y = mapDepthToY(d);
+    ctx.beginPath();
+    ctx.setLineDash([lineWidth * 2, lineWidth * 4]);
+    ctx.moveTo(graphLeft, y);
+    ctx.lineTo(graphRight, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillText(`${d.toFixed(0)}`, graphLeft - ms * 0.1, y);
+  }
+
+  // Draw qc scale label at top
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillStyle = qcColor;
+  ctx.fillText(`qc (${maxQc.toFixed(0)} MPa)`, graphLeft + graphWidth / 2, graphTop - ms * 0.05);
+
+  // Draw depth axis label
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = axisColor;
+  ctx.fillText('depth (m)', graphLeft - ms * 0.1, graphTop);
+
+  // Draw qc profile line
+  ctx.strokeStyle = qcColor;
+  ctx.lineWidth = lineWidth * 1.5;
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < data.depth.length; i++) {
+    const x = mapQcToX(data.qc[i]);
+    const y = mapDepthToY(data.depth[i]);
+    if (!started) {
+      ctx.moveTo(x, y);
+      started = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.stroke();
+
+  // Draw fs profile line (if data has meaningful fs values)
+  if (maxFs > 0) {
+    ctx.strokeStyle = fsColor;
+    ctx.lineWidth = lineWidth;
+    ctx.beginPath();
+    started = false;
+    for (let i = 0; i < data.depth.length; i++) {
+      if (i >= data.fs.length) break;
+      const x = mapFsToX(data.fs[i]);
+      const y = mapDepthToY(data.depth[i]);
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+
+    // fs legend
+    ctx.fillStyle = fsColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('fs', graphRight + ms * 0.15, graphTop - ms * 0.05);
+  }
+
+  // Draw rf (friction ratio) profile line if data has meaningful rf values
+  if (rfArray && maxRf > 0) {
+    ctx.strokeStyle = rfColor;
+    ctx.lineWidth = lineWidth;
+    ctx.setLineDash([lineWidth * 3, lineWidth * 2]);
+    ctx.beginPath();
+    started = false;
+    for (let i = 0; i < data.depth.length; i++) {
+      if (i >= rfArray.length) break;
+      const x = mapRfToX(rfArray[i]);
+      const y = mapDepthToY(data.depth[i]);
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // rf legend
+    ctx.fillStyle = rfColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`Rf (${maxRf.toFixed(1)}%)`, graphRight + ms * 0.15, graphTop + axisFontSize * 1.2);
+  }
+
+  // Source file label at bottom
+  if (data.sourceFile) {
+    ctx.fillStyle = axisColor;
+    ctx.font = `${axisFontSize * 0.8}px ${CAD_DEFAULT_FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(data.sourceFile, graphLeft + graphWidth / 2, graphBottom + ms * 0.1);
+  }
+
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------------------
@@ -1227,11 +1423,25 @@ function drawArcWall(renderCtx: ShapeRenderContext, shape: WallShape, invertColo
   let innerR: number;
   let outerR: number;
   if (justification === 'left') {
-    innerR = radius;
-    outerR = radius + thickness;
+    // "Left justified" = left face on draw line, wall extends to the right.
+    // For arcs: right side is inward when center is to the right (!clockwise),
+    // outward when center is to the left (clockwise).
+    if (clockwise) {
+      innerR = radius;
+      outerR = radius + thickness;
+    } else {
+      innerR = radius - thickness;
+      outerR = radius;
+    }
   } else if (justification === 'right') {
-    innerR = radius - thickness;
-    outerR = radius;
+    // "Right justified" = right face on draw line, wall extends to the left.
+    if (clockwise) {
+      innerR = radius - thickness;
+      outerR = radius;
+    } else {
+      innerR = radius;
+      outerR = radius + thickness;
+    }
   } else {
     innerR = radius - thickness / 2;
     outerR = radius + thickness / 2;
@@ -1810,6 +2020,130 @@ function drawWall(renderCtx: ShapeRenderContext, shape: WallShape, invertColors:
     ctx.stroke();
     ctx.restore();
   }
+
+  // Clear wall fill for hosted openings (draw background-colored rectangles over opening areas)
+  {
+    const allShapes = useAppStore.getState().shapes;
+    const openings = allShapes.filter((s: any) => s.type === 'wall-opening' && s.hostWallId === shape.id);
+    if (openings.length > 0) {
+      const wallLen = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
+      if (wallLen > 0.001) {
+        const dirX = (end.x - start.x) / wallLen;
+        const dirY = (end.y - start.y) / wallLen;
+        const perpX = -dirY;
+        const perpY = dirX;
+
+        let leftThick: number;
+        let rightThick: number;
+        if (shape.justification === 'left') { leftThick = 0; rightThick = shape.thickness; }
+        else if (shape.justification === 'right') { leftThick = shape.thickness; rightThick = 0; }
+        else { leftThick = shape.thickness / 2; rightThick = shape.thickness / 2; }
+
+        const bgColor = invertColors ? '#ffffff' : '#1e1e1e';
+        for (const opening of openings) {
+          const wo = opening as any;
+          const halfW = wo.width / 2;
+          const startAlong = wo.positionAlongWall - halfW;
+          const endAlong = wo.positionAlongWall + halfW;
+
+          const c0 = { x: start.x + dirX * startAlong + perpX * leftThick, y: start.y + dirY * startAlong + perpY * leftThick };
+          const c1 = { x: start.x + dirX * endAlong + perpX * leftThick, y: start.y + dirY * endAlong + perpY * leftThick };
+          const c2 = { x: start.x + dirX * endAlong - perpX * rightThick, y: start.y + dirY * endAlong - perpY * rightThick };
+          const c3 = { x: start.x + dirX * startAlong - perpX * rightThick, y: start.y + dirY * startAlong - perpY * rightThick };
+
+          ctx.save();
+          ctx.fillStyle = bgColor;
+          ctx.beginPath();
+          ctx.moveTo(c0.x, c0.y);
+          ctx.lineTo(c1.x, c1.y);
+          ctx.lineTo(c2.x, c2.y);
+          ctx.lineTo(c3.x, c3.y);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wall Opening (hosted in a wall)
+// ---------------------------------------------------------------------------
+
+function drawWallOpening(renderCtx: ShapeRenderContext, shape: any, invertColors: boolean): void {
+  const ctx = renderCtx.ctx;
+  const wo = shape as { hostWallId: string; positionAlongWall: number; width: number; height: number; sillHeight: number; style: any };
+
+  // Find the host wall
+  const allShapes = useAppStore.getState().shapes;
+  const hostWall = allShapes.find(s => s.id === wo.hostWallId) as WallShape | undefined;
+  if (!hostWall) return;
+
+  const dx = hostWall.end.x - hostWall.start.x;
+  const dy = hostWall.end.y - hostWall.start.y;
+  const wallLength = Math.sqrt(dx * dx + dy * dy);
+  if (wallLength < 0.001) return;
+
+  // Wall direction and perpendicular
+  const dirX = dx / wallLength;
+  const dirY = dy / wallLength;
+  const perpX = -dirY;
+  const perpY = dirX;
+
+  // Half-thickness offsets based on wall justification
+  let leftThick: number;
+  let rightThick: number;
+  if (hostWall.justification === 'left') {
+    leftThick = 0;
+    rightThick = hostWall.thickness;
+  } else if (hostWall.justification === 'right') {
+    leftThick = hostWall.thickness;
+    rightThick = 0;
+  } else {
+    leftThick = hostWall.thickness / 2;
+    rightThick = hostWall.thickness / 2;
+  }
+
+  // Opening corners along wall centerline
+  const halfW = wo.width / 2;
+  const startAlong = wo.positionAlongWall - halfW;
+  const endAlong = wo.positionAlongWall + halfW;
+
+  // Four corners of the opening rectangle (in world coordinates)
+  const c0 = { x: hostWall.start.x + dirX * startAlong + perpX * leftThick, y: hostWall.start.y + dirY * startAlong + perpY * leftThick };
+  const c1 = { x: hostWall.start.x + dirX * endAlong + perpX * leftThick, y: hostWall.start.y + dirY * endAlong + perpY * leftThick };
+  const c2 = { x: hostWall.start.x + dirX * endAlong - perpX * rightThick, y: hostWall.start.y + dirY * endAlong - perpY * rightThick };
+  const c3 = { x: hostWall.start.x + dirX * startAlong - perpX * rightThick, y: hostWall.start.y + dirY * startAlong - perpY * rightThick };
+
+  let strokeColor = shape.style?.strokeColor || '#ffffff';
+  if (invertColors && strokeColor === '#ffffff') strokeColor = '#000000';
+
+  ctx.save();
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = shape.style?.strokeWidth || 1;
+  ctx.setLineDash([]);
+
+  // Draw outline rectangle
+  ctx.beginPath();
+  ctx.moveTo(c0.x, c0.y);
+  ctx.lineTo(c1.x, c1.y);
+  ctx.lineTo(c2.x, c2.y);
+  ctx.lineTo(c3.x, c3.y);
+  ctx.closePath();
+  ctx.stroke();
+
+  // Draw X (cross) inside
+  ctx.beginPath();
+  ctx.moveTo(c0.x, c0.y);
+  ctx.lineTo(c2.x, c2.y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(c1.x, c1.y);
+  ctx.lineTo(c3.x, c3.y);
+  ctx.stroke();
+
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------------------
@@ -1830,27 +2164,41 @@ function drawSlab(renderCtx: ShapeRenderContext, shape: SlabShape, invertColors:
   const effectivePatternId = matSetting.hatchPatternId;
   const effectiveBackgroundColor = matSetting.backgroundColor;
 
-  // Draw slab outline
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i].x, points[i].y);
-  }
-  ctx.closePath();
-  ctx.stroke();
-
-  // Hatch fill
-  if ((effectiveHatchType && effectiveHatchType !== 'none') || effectivePatternId) {
-    const strokeWidth = ctx.lineWidth;
-    ctx.save();
-
+  // Helper: trace the outer boundary and all inner contours into the current path
+  // using evenodd fill rule so inner contours become holes
+  const traceSlabPath = () => {
     ctx.beginPath();
+    // Outer boundary (clockwise)
     ctx.moveTo(points[0].x, points[0].y);
     for (let i = 1; i < points.length; i++) {
       ctx.lineTo(points[i].x, points[i].y);
     }
     ctx.closePath();
-    ctx.clip();
+    // Inner contours (holes)
+    if (shape.innerContours) {
+      for (const contour of shape.innerContours) {
+        if (contour.length < 3) continue;
+        ctx.moveTo(contour[0].x, contour[0].y);
+        for (let i = 1; i < contour.length; i++) {
+          ctx.lineTo(contour[i].x, contour[i].y);
+        }
+        ctx.closePath();
+      }
+    }
+  };
+
+  // Draw slab outline (outer boundary + inner contour outlines)
+  traceSlabPath();
+  ctx.stroke();
+
+  // Hatch fill — skip when slab surface pattern is disabled (e.g. Structural Plan drawing standard)
+  if (renderCtx.slabSurfacePatternEnabled !== false && ((effectiveHatchType && effectiveHatchType !== 'none') || effectivePatternId)) {
+    const strokeWidth = ctx.lineWidth;
+    ctx.save();
+
+    // Clip to outer boundary minus inner contours using evenodd
+    traceSlabPath();
+    ctx.clip('evenodd');
 
     if (effectiveBackgroundColor) {
       ctx.fillStyle = effectiveBackgroundColor;
@@ -1917,6 +2265,95 @@ function drawSlab(renderCtx: ShapeRenderContext, shape: SlabShape, invertColors:
       } else if (effectiveHatchType === 'dots') {
         renderCtx.drawLineFamilySimple(hatchAngle, spacing, minX, minY, maxX, maxY);
       }
+    }
+
+    ctx.restore();
+  }
+
+  // Draw span direction arrows if spanDirection is set
+  if (shape.spanDirection !== undefined && shape.spanDirection !== null) {
+    let arrowColor = shape.style.strokeColor;
+    if (invertColors && arrowColor === '#ffffff') {
+      arrowColor = '#000000';
+    }
+
+    // Calculate centroid
+    let cx = 0, cy = 0;
+    for (const p of points) {
+      cx += p.x;
+      cy += p.y;
+    }
+    cx /= points.length;
+    cy /= points.length;
+
+    // Calculate bounding box to determine arrow length
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+
+    const spanAngleRad = (shape.spanDirection * Math.PI) / 180;
+    const bboxWidth = maxX - minX;
+    const bboxHeight = maxY - minY;
+
+    // Arrow length: 60% of dimension along span direction
+    const diagProjection = Math.abs(bboxWidth * Math.cos(spanAngleRad)) + Math.abs(bboxHeight * Math.sin(spanAngleRad));
+    const arrowLen = Math.max(diagProjection * 0.5, 200);
+    const halfLen = arrowLen / 2;
+
+    // Arrowhead size
+    const arrowHeadLen = Math.min(halfLen * 0.2, 80);
+    const arrowHeadWidth = arrowHeadLen * 0.5;
+
+    // Two parallel arrows offset from the centroid
+    const perpAngle = spanAngleRad + Math.PI / 2;
+    const arrowSpacing = Math.min(bboxWidth, bboxHeight) * 0.15;
+    const lineWidth = ctx.lineWidth;
+
+    ctx.save();
+    ctx.strokeStyle = arrowColor;
+    ctx.fillStyle = arrowColor;
+    ctx.lineWidth = lineWidth * 0.8;
+    ctx.setLineDash([]);
+
+    for (const offset of [-arrowSpacing, arrowSpacing]) {
+      const ocx = cx + Math.cos(perpAngle) * offset;
+      const ocy = cy + Math.sin(perpAngle) * offset;
+
+      const dx = Math.cos(spanAngleRad);
+      const dy = Math.sin(spanAngleRad);
+
+      const startX = ocx - dx * halfLen;
+      const startY = ocy - dy * halfLen;
+      const endX = ocx + dx * halfLen;
+      const endY = ocy + dy * halfLen;
+
+      // Draw arrow shaft
+      ctx.beginPath();
+      ctx.moveTo(startX + dx * arrowHeadLen, startY + dy * arrowHeadLen);
+      ctx.lineTo(endX - dx * arrowHeadLen, endY - dy * arrowHeadLen);
+      ctx.stroke();
+
+      // Start arrowhead (pointing toward start)
+      const perpX = -dy;
+      const perpY = dx;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(startX + dx * arrowHeadLen + perpX * arrowHeadWidth, startY + dy * arrowHeadLen + perpY * arrowHeadWidth);
+      ctx.lineTo(startX + dx * arrowHeadLen - perpX * arrowHeadWidth, startY + dy * arrowHeadLen - perpY * arrowHeadWidth);
+      ctx.closePath();
+      ctx.fill();
+
+      // End arrowhead (pointing toward end)
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(endX - dx * arrowHeadLen + perpX * arrowHeadWidth, endY - dy * arrowHeadLen + perpY * arrowHeadWidth);
+      ctx.lineTo(endX - dx * arrowHeadLen - perpX * arrowHeadWidth, endY - dy * arrowHeadLen - perpY * arrowHeadWidth);
+      ctx.closePath();
+      ctx.fill();
     }
 
     ctx.restore();
@@ -2484,14 +2921,381 @@ function drawSectionCallout(renderCtx: ShapeRenderContext, shape: SectionCallout
   ctx.lineWidth = origLineWidth;
 }
 
+// ---------------------------------------------------------------------------
+// Slab Opening
+// ---------------------------------------------------------------------------
+
+function drawSlabOpening(renderCtx: ShapeRenderContext, shape: SlabOpeningShape, invertColors: boolean): void {
+  const ctx = renderCtx.ctx;
+  const { points } = shape;
+
+  if (points.length < 3) return;
+
+  let strokeColor = shape.style.strokeColor;
+  if (invertColors && strokeColor === '#ffffff') {
+    strokeColor = '#000000';
+  }
+
+  // Draw the outline polygon
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+
+  // Determine display style: use shape override, then drawing standard, default 'cross'
+  const displayStyle = shape.displayStyle || renderCtx.openingDisplayStyle || 'cross';
+
+  if (displayStyle === 'outline') {
+    // Outline only — no interior cross lines
+    return;
+  }
+
+  // Compute bounding box of the polygon
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+
+  // Save state and clip to the polygon boundary
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.closePath();
+  ctx.clip();
+
+  if (displayStyle === 'cross') {
+    // Draw an X from bounding box corners
+    ctx.beginPath();
+    ctx.moveTo(minX, minY);
+    ctx.lineTo(maxX, maxY);
+    ctx.moveTo(maxX, minY);
+    ctx.lineTo(minX, maxY);
+    ctx.stroke();
+  } else if (displayStyle === 'diagonal') {
+    // Draw diagonal lines at 45 degrees across the opening
+    const size = Math.max(maxX - minX, maxY - minY);
+    const spacing = size / 8;  // Roughly 8 diagonal lines
+    if (spacing > 0) {
+      ctx.beginPath();
+      const diag = (maxX - minX) + (maxY - minY);
+      for (let d = -diag; d <= diag; d += spacing) {
+        ctx.moveTo(minX + d, minY);
+        ctx.lineTo(minX + d + (maxY - minY), maxY);
+      }
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Slab Label
+// ---------------------------------------------------------------------------
+
+function drawSlabLabel(renderCtx: ShapeRenderContext, shape: SlabLabelShape, invertColors: boolean): void {
+  const ctx = renderCtx.ctx;
+  const { position, floorType, customTypeName, thickness, spanDirection, fontSize, arrowLength } = shape;
+
+  let textColor = shape.style.strokeColor;
+  if (invertColors && textColor === '#ffffff') {
+    textColor = '#000000';
+  }
+
+  // Resolve display name
+  const ftInfo = STRUCTURAL_FLOOR_TYPES.find(ft => ft.value === floorType);
+  const typeName = floorType === 'custom'
+    ? (customTypeName || 'Custom')
+    : (ftInfo?.label || floorType);
+
+  const spanAngleRad = (spanDirection * Math.PI) / 180;
+
+  ctx.save();
+  ctx.translate(position.x, position.y);
+
+  // --- Draw span direction arrows (two parallel double-headed arrows) ---
+  const halfLen = arrowLength / 2;
+  const arrowHeadLen = Math.min(halfLen * 0.2, fontSize * 1.0);
+  const arrowHeadWidth = arrowHeadLen * 0.5;
+  const arrowSpacing = fontSize * 1.5;
+
+  ctx.strokeStyle = textColor;
+  ctx.fillStyle = textColor;
+  ctx.lineWidth = renderCtx.getLineWidth ? renderCtx.getLineWidth(shape.style.strokeWidth) : shape.style.strokeWidth;
+  ctx.setLineDash([]);
+
+  const dx = Math.cos(spanAngleRad);
+  const dy = Math.sin(spanAngleRad);
+  const perpX = -dy;
+  const perpY = dx;
+
+  for (const offset of [-arrowSpacing, arrowSpacing]) {
+    const ocx = perpX * offset;
+    const ocy = perpY * offset;
+
+    const startX = ocx - dx * halfLen;
+    const startY = ocy - dy * halfLen;
+    const endX = ocx + dx * halfLen;
+    const endY = ocy + dy * halfLen;
+
+    // Arrow shaft
+    ctx.beginPath();
+    ctx.moveTo(startX + dx * arrowHeadLen, startY + dy * arrowHeadLen);
+    ctx.lineTo(endX - dx * arrowHeadLen, endY - dy * arrowHeadLen);
+    ctx.stroke();
+
+    // Start arrowhead
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(startX + dx * arrowHeadLen + perpX * arrowHeadWidth, startY + dy * arrowHeadLen + perpY * arrowHeadWidth);
+    ctx.lineTo(startX + dx * arrowHeadLen - perpX * arrowHeadWidth, startY + dy * arrowHeadLen - perpY * arrowHeadWidth);
+    ctx.closePath();
+    ctx.fill();
+
+    // End arrowhead
+    ctx.beginPath();
+    ctx.moveTo(endX, endY);
+    ctx.lineTo(endX - dx * arrowHeadLen + perpX * arrowHeadWidth, endY - dy * arrowHeadLen + perpY * arrowHeadWidth);
+    ctx.lineTo(endX - dx * arrowHeadLen - perpX * arrowHeadWidth, endY - dy * arrowHeadLen - perpY * arrowHeadWidth);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // --- Draw label text (type name + thickness) centered between arrows ---
+  const fontStyle = `${fontSize}px ${CAD_DEFAULT_FONT}`;
+  ctx.font = fontStyle;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = textColor;
+
+  const line1 = typeName;
+  const line2 = `${thickness} mm`;
+  const lineSpacing = fontSize * 1.3;
+
+  // Background mask behind text
+  const bgPadding = fontSize * 0.3;
+  const maxTextWidth = Math.max(ctx.measureText(line1).width, ctx.measureText(line2).width);
+  const bgWidth = maxTextWidth + bgPadding * 2;
+  const bgHeight = lineSpacing * 2 + bgPadding * 2;
+
+  let bgColor = '#1a1a2e';
+  if (invertColors) bgColor = '#ffffff';
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight);
+
+  // Border around background
+  ctx.strokeStyle = textColor;
+  ctx.lineWidth = shape.style.strokeWidth * 0.5;
+  ctx.strokeRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight);
+
+  // Text lines
+  ctx.fillStyle = textColor;
+  ctx.fillText(line1, 0, -lineSpacing * 0.5);
+  ctx.fillText(line2, 0, lineSpacing * 0.5);
+
+  ctx.restore();
+}
+
+// ===========================================================================
+// Column rendering
+// ===========================================================================
+
+/** Draw a column shape in plan view as a filled rectangle with material-specific hatch */
+function drawColumn(renderCtx: ShapeRenderContext, shape: ColumnShape, invertColors: boolean): void {
+  const ctx = renderCtx.ctx;
+  const { position, width, depth, rotation, material } = shape;
+
+  const halfW = width / 2;
+  const halfD = depth / 2;
+
+  ctx.save();
+  ctx.translate(position.x, position.y);
+  if (rotation) ctx.rotate(rotation);
+
+  const strokeColor = invertColors ? '#000000' : (shape.style.strokeColor || '#ffffff');
+  const lineWidth = renderCtx.getLineWidth ? renderCtx.getLineWidth(shape.style.strokeWidth) : shape.style.strokeWidth;
+
+  // Fill background
+  let fillColor: string;
+  if (material === 'concrete') {
+    fillColor = invertColors ? '#e8e8e8' : '#3a3a4a';
+  } else if (material === 'steel') {
+    fillColor = invertColors ? '#d8dce8' : '#2a3040';
+  } else {
+    // timber
+    fillColor = invertColors ? '#f0e8d8' : '#3a3020';
+  }
+
+  ctx.fillStyle = fillColor;
+  ctx.fillRect(-halfW, -halfD, width, depth);
+
+  // Draw material hatch pattern
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = lineWidth * 0.5;
+
+  if (material === 'concrete') {
+    // Diagonal hatch pattern
+    ctx.beginPath();
+    const spacing = Math.min(width, depth) * 0.15;
+    const diagLen = Math.sqrt(width * width + depth * depth);
+    const count = Math.ceil(diagLen / spacing);
+    ctx.save();
+    ctx.rect(-halfW, -halfD, width, depth);
+    ctx.clip();
+    for (let i = -count; i <= count; i++) {
+      const offset = i * spacing;
+      ctx.moveTo(-halfW + offset, -halfD);
+      ctx.lineTo(-halfW + offset + depth, -halfD + depth);
+    }
+    ctx.stroke();
+    ctx.restore();
+  } else if (material === 'steel') {
+    // Centerline cross pattern
+    ctx.beginPath();
+    ctx.moveTo(-halfW, 0);
+    ctx.lineTo(halfW, 0);
+    ctx.moveTo(0, -halfD);
+    ctx.lineTo(0, halfD);
+    ctx.stroke();
+
+    // Diagonal cross
+    ctx.beginPath();
+    const crossSize = Math.min(halfW, halfD) * 0.4;
+    ctx.moveTo(-crossSize, -crossSize);
+    ctx.lineTo(crossSize, crossSize);
+    ctx.moveTo(crossSize, -crossSize);
+    ctx.lineTo(-crossSize, crossSize);
+    ctx.stroke();
+  }
+  // timber: no hatch, just fill
+
+  // Outline
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = lineWidth;
+  ctx.setLineDash([]);
+  ctx.strokeRect(-halfW, -halfD, width, depth);
+
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Rebar (IfcReinforcingBar)
+// ---------------------------------------------------------------------------
+
+function drawRebar(renderCtx: ShapeRenderContext, shape: RebarShape, invertColors: boolean): void {
+  const ctx = renderCtx.ctx;
+  const { position, diameter, barMark, viewMode, endPoint, count, spacing } = shape;
+
+  const strokeColor = invertColors ? '#000000' : (shape.style.strokeColor || '#ffffff');
+  const fillColor = invertColors ? '#555555' : '#4a7a4a';
+  const lineWidth = renderCtx.getLineWidth ? renderCtx.getLineWidth(shape.style.strokeWidth) : shape.style.strokeWidth;
+
+  if (viewMode === 'longitudinal' && endPoint) {
+    // Longitudinal view: draw as line with end hooks
+    const r = diameter / 2;
+    const hookLen = diameter * 3;
+
+    ctx.save();
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = Math.max(lineWidth, diameter * 0.3);
+    ctx.setLineDash([]);
+
+    // Main bar
+    ctx.beginPath();
+    ctx.moveTo(position.x, position.y);
+    ctx.lineTo(endPoint.x, endPoint.y);
+    ctx.stroke();
+
+    // End hooks (90-degree bends)
+    const dx = endPoint.x - position.x;
+    const dy = endPoint.y - position.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len > 0) {
+      const dirX = dx / len;
+      const dirY = dy / len;
+      const perpX = -dirY;
+      const perpY = dirX;
+
+      // Start hook
+      ctx.beginPath();
+      ctx.moveTo(position.x, position.y);
+      ctx.lineTo(position.x + perpX * hookLen, position.y + perpY * hookLen);
+      ctx.stroke();
+
+      // End hook
+      ctx.beginPath();
+      ctx.moveTo(endPoint.x, endPoint.y);
+      ctx.lineTo(endPoint.x + perpX * hookLen, endPoint.y + perpY * hookLen);
+      ctx.stroke();
+    }
+
+    // Label
+    const midX = (position.x + endPoint.x) / 2;
+    const midY = (position.y + endPoint.y) / 2;
+    const labelSize = Math.max(diameter * 3, 80);
+    ctx.font = `${labelSize}px ${CAD_DEFAULT_FONT}`;
+    ctx.fillStyle = strokeColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    const label = count && spacing
+      ? `${count}-\u00d8${diameter} c.t.c. ${spacing}`
+      : count
+      ? `${count}-\u00d8${diameter}`
+      : `\u00d8${diameter}`;
+    ctx.fillText(`${barMark}: ${label}`, midX, midY - diameter);
+
+    ctx.restore();
+  } else {
+    // Cross-section view: draw as filled circle
+    const r = diameter / 2;
+    const drawRadius = Math.max(r, 20); // Minimum visual radius
+
+    ctx.save();
+
+    // Filled circle
+    ctx.beginPath();
+    ctx.arc(position.x, position.y, drawRadius, 0, Math.PI * 2);
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = lineWidth;
+    ctx.setLineDash([]);
+    ctx.stroke();
+
+    // Label next to bar
+    const labelSize = Math.max(diameter * 2.5, 60);
+    ctx.font = `${labelSize}px ${CAD_DEFAULT_FONT}`;
+    ctx.fillStyle = strokeColor;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const label = count && spacing
+      ? `${barMark}: ${count}-\u00d8${diameter} c.t.c. ${spacing}`
+      : count
+      ? `${barMark}: ${count}-\u00d8${diameter}`
+      : `${barMark}: \u00d8${diameter}`;
+    ctx.fillText(label, position.x + drawRadius + labelSize * 0.3, position.y);
+
+    ctx.restore();
+  }
+}
+
 // ===========================================================================
 // Registry: register / unregister all AEC shape renderers
 // ===========================================================================
 
 const SHAPE_TYPES = [
-  'beam', 'gridline', 'level', 'puntniveau', 'pile', 'cpt',
-  'foundation-zone', 'spot-elevation', 'wall', 'slab', 'space',
-  'plate-system', 'section-callout',
+  'beam', 'gridline', 'level', 'puntniveau', 'pile', 'column', 'cpt',
+  'foundation-zone', 'spot-elevation', 'wall', 'wall-opening', 'slab', 'slab-opening', 'slab-label', 'space',
+  'plate-system', 'section-callout', 'rebar',
 ] as const;
 
 export function registerRenderers(): void {
@@ -2545,6 +3349,16 @@ export function registerRenderers(): void {
     drawPile(renderCtx, shape as PileShape, invertColors);
   });
 
+  // --- column ---
+  shapeRendererRegistry.register('column', (_ctx, shape, _isSelected, _isHovered, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawColumn(renderCtx, shape as ColumnShape, invertColors);
+  });
+  shapeRendererRegistry.registerSimple('column', (_ctx, shape, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawColumn(renderCtx, shape as ColumnShape, invertColors);
+  });
+
   // --- cpt ---
   shapeRendererRegistry.register('cpt', (_ctx, shape, _isSelected, _isHovered, invertColors, renderCtx) => {
     if (!renderCtx) return;
@@ -2585,6 +3399,16 @@ export function registerRenderers(): void {
     drawWall(renderCtx, shape as WallShape, invertColors);
   });
 
+  // --- wall-opening ---
+  shapeRendererRegistry.register('wall-opening', (_ctx, shape, _isSelected, _isHovered, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawWallOpening(renderCtx, shape, invertColors);
+  });
+  shapeRendererRegistry.registerSimple('wall-opening', (_ctx, shape, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawWallOpening(renderCtx, shape, invertColors);
+  });
+
   // --- slab ---
   shapeRendererRegistry.register('slab', (_ctx, shape, _isSelected, _isHovered, invertColors, renderCtx) => {
     if (!renderCtx) return;
@@ -2593,6 +3417,26 @@ export function registerRenderers(): void {
   shapeRendererRegistry.registerSimple('slab', (_ctx, shape, invertColors, renderCtx) => {
     if (!renderCtx) return;
     drawSlab(renderCtx, shape as SlabShape, invertColors);
+  });
+
+  // --- slab-opening ---
+  shapeRendererRegistry.register('slab-opening', (_ctx, shape, _isSelected, _isHovered, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawSlabOpening(renderCtx, shape as SlabOpeningShape, invertColors);
+  });
+  shapeRendererRegistry.registerSimple('slab-opening', (_ctx, shape, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawSlabOpening(renderCtx, shape as SlabOpeningShape, invertColors);
+  });
+
+  // --- slab-label ---
+  shapeRendererRegistry.register('slab-label', (_ctx, shape, _isSelected, _isHovered, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawSlabLabel(renderCtx, shape as SlabLabelShape, invertColors);
+  });
+  shapeRendererRegistry.registerSimple('slab-label', (_ctx, shape, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawSlabLabel(renderCtx, shape as SlabLabelShape, invertColors);
   });
 
   // --- space ---
@@ -2630,6 +3474,16 @@ export function registerRenderers(): void {
   shapeRendererRegistry.registerSimple('section-callout', (_ctx, shape, invertColors, renderCtx) => {
     if (!renderCtx) return;
     drawSectionCallout(renderCtx, shape as SectionCalloutShape, invertColors);
+  });
+
+  // --- rebar ---
+  shapeRendererRegistry.register('rebar', (_ctx, shape, _isSelected, _isHovered, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawRebar(renderCtx, shape as RebarShape, invertColors);
+  });
+  shapeRendererRegistry.registerSimple('rebar', (_ctx, shape, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawRebar(renderCtx, shape as RebarShape, invertColors);
   });
 }
 

@@ -120,9 +120,11 @@ function drawGridlinePreview(
 
   // Line extends beyond start/end (at reference scale), scaled for current drawing scale
   const glExt = renderCtx.gridlineExtension * glScaleFactor;
+  const glScaledLineWidth = ctx.lineWidth * glScaleFactor;
 
   // Draw dash-dot line with scale-aware pattern (matching actual gridline)
   ctx.save();
+  ctx.lineWidth = glScaledLineWidth;
   ctx.setLineDash(renderCtx.getLineDash('dashdot'));
   ctx.beginPath();
   ctx.moveTo(glStart.x - glDx * glExt, glStart.y - glDy * glExt);
@@ -131,6 +133,7 @@ function drawGridlinePreview(
   ctx.restore();
 
   // Draw bubbles at correct offset (extension + bubbleRadius from endpoint)
+  ctx.lineWidth = glScaledLineWidth;
   ctx.setLineDash([]);
   const drawBubble = (cx: number, cy: number) => {
     ctx.beginPath();
@@ -319,11 +322,23 @@ function drawWallPreview(
     let wArcInnerR: number;
     let wArcOuterR: number;
     if (wArcJust === 'left') {
-      wArcInnerR = wArc.radius;
-      wArcOuterR = wArc.radius + wThick;
+      // "Left justified" = left face on draw line, wall extends to the right.
+      if (wArc.clockwise) {
+        wArcInnerR = wArc.radius;
+        wArcOuterR = wArc.radius + wThick;
+      } else {
+        wArcInnerR = wArc.radius - wThick;
+        wArcOuterR = wArc.radius;
+      }
     } else if (wArcJust === 'right') {
-      wArcInnerR = wArc.radius - wThick;
-      wArcOuterR = wArc.radius;
+      // "Right justified" = right face on draw line, wall extends to the left.
+      if (wArc.clockwise) {
+        wArcInnerR = wArc.radius - wThick;
+        wArcOuterR = wArc.radius;
+      } else {
+        wArcInnerR = wArc.radius;
+        wArcOuterR = wArc.radius + wThick;
+      }
     } else {
       wArcInnerR = wArc.radius - wThick / 2;
       wArcOuterR = wArc.radius + wThick / 2;
@@ -442,11 +457,13 @@ function drawWallPreview(
   let wLeftThick: number;
   let wRightThick: number;
   if (wJust === 'left') {
-    wLeftThick = wThick;
-    wRightThick = 0;
-  } else if (wJust === 'right') {
+    // "Left justified" = left face on draw line, wall extends to the right
     wLeftThick = 0;
     wRightThick = wThick;
+  } else if (wJust === 'right') {
+    // "Right justified" = right face on draw line, wall extends to the left
+    wLeftThick = wThick;
+    wRightThick = 0;
   } else {
     wLeftThick = wThick / 2;
     wRightThick = wThick / 2;
@@ -607,8 +624,8 @@ function drawWallRectanglePreview(
     const wrAngle = Math.atan2(wre.y - wrs.y, wre.x - wrs.x);
 
     let wrLeft: number, wrRight: number;
-    if (wrJust === 'left') { wrLeft = wrThick; wrRight = 0; }
-    else if (wrJust === 'right') { wrLeft = 0; wrRight = wrThick; }
+    if (wrJust === 'left') { wrLeft = 0; wrRight = wrThick; }
+    else if (wrJust === 'right') { wrLeft = wrThick; wrRight = 0; }
     else { wrLeft = wrThick / 2; wrRight = wrThick / 2; }
 
     const wrPx = Math.sin(wrAngle);
@@ -715,11 +732,13 @@ function drawWallCirclePreview(
 
   let wcInnerR: number, wcOuterR: number;
   if (wcJust === 'left') {
-    wcInnerR = wcRadius;
-    wcOuterR = wcRadius + wcThick;
-  } else if (wcJust === 'right') {
+    // "Left justified" = left face on draw line, wall extends to the right
     wcInnerR = wcRadius - wcThick;
     wcOuterR = wcRadius;
+  } else if (wcJust === 'right') {
+    // "Right justified" = right face on draw line, wall extends to the left
+    wcInnerR = wcRadius;
+    wcOuterR = wcRadius + wcThick;
   } else {
     wcInnerR = wcRadius - wcThick / 2;
     wcOuterR = wcRadius + wcThick / 2;
@@ -833,74 +852,71 @@ function drawSlabPreview(
     ctx.closePath();
     ctx.stroke();
 
-    // Hatch fill preview - use materialHatchSettings (resolve from slab material or default to concrete)
-    if (allSlabPts.length >= 3) {
-      const slabMaterial = (preview as { material?: string }).material || 'concrete';
-      const slabPreviewHatch = renderCtx.materialHatchSettings[slabMaterial]
-        || DEFAULT_MATERIAL_HATCH_SETTINGS[slabMaterial]
-        || renderCtx.materialHatchSettings['concrete']
-        || DEFAULT_MATERIAL_HATCH_SETTINGS['concrete'];
-      if ((slabPreviewHatch.hatchType && slabPreviewHatch.hatchType !== 'none') || slabPreviewHatch.hatchPatternId) {
-        const slabSW = ctx.lineWidth;
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(allSlabPts[0].x, allSlabPts[0].y);
-        for (let si = 1; si < allSlabPts.length; si++) {
-          ctx.lineTo(allSlabPts[si].x, allSlabPts[si].y);
-        }
-        ctx.closePath();
-        ctx.clip();
-        ctx.lineWidth = slabSW * 0.4;
-        ctx.setLineDash([]);
-
-        // Fill solid background color first (under hatch lines)
-        if (slabPreviewHatch.backgroundColor) {
-          ctx.fillStyle = slabPreviewHatch.backgroundColor;
-          ctx.fill();
-        }
-
-        const sMinX = Math.min(...allSlabPts.map(p => p.x));
-        const sMinY = Math.min(...allSlabPts.map(p => p.y));
-        const sMaxX = Math.max(...allSlabPts.map(p => p.x));
-        const sMaxY = Math.max(...allSlabPts.map(p => p.y));
-        const sSpacing = slabPreviewHatch.hatchSpacing || 100;
-        const sHatchColor = slabPreviewHatch.hatchColor || (ctx.strokeStyle as string);
-        ctx.strokeStyle = sHatchColor;
-
-        const slabPreviewPattern = slabPreviewHatch.hatchPatternId ? renderCtx.getPatternById(slabPreviewHatch.hatchPatternId) : undefined;
-        if (slabPreviewPattern && slabPreviewPattern.lineFamilies.length > 0) {
-          const sPScale = sSpacing / 10;
-          // Special case: insulation patterns get zigzag rendering (NEN standard)
-          if (slabPreviewHatch.hatchPatternId === 'nen47-isolatie' || slabPreviewHatch.hatchPatternId === 'insulation') {
-            renderCtx.drawInsulationZigzag(sMinX, sMinY, sMaxX, sMaxY, sPScale, 0, sHatchColor, slabSW);
-          } else {
-            renderCtx.drawCustomPatternLines(slabPreviewPattern.lineFamilies, sMinX, sMinY, sMaxX, sMaxY, sPScale, 0, sHatchColor, slabSW);
-          }
-        } else if (slabPreviewPattern && slabPreviewPattern.lineFamilies.length === 0) {
-          // Solid fill
-          ctx.fillStyle = sHatchColor;
-          ctx.fill();
-        } else if (slabPreviewHatch.hatchType === 'solid') {
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-          ctx.fill();
-        } else {
-          const sAngle = slabPreviewHatch.hatchAngle || 45;
-          if (slabPreviewHatch.hatchType === 'diagonal') {
-            renderCtx.drawLineFamilySimple(sAngle, sSpacing, sMinX, sMinY, sMaxX, sMaxY);
-          } else if (slabPreviewHatch.hatchType === 'crosshatch') {
-            renderCtx.drawLineFamilySimple(sAngle, sSpacing, sMinX, sMinY, sMaxX, sMaxY);
-            renderCtx.drawLineFamilySimple(sAngle + 90, sSpacing, sMinX, sMinY, sMaxX, sMaxY);
-          } else if (slabPreviewHatch.hatchType === 'horizontal') {
-            renderCtx.drawLineFamilySimple(0, sSpacing, sMinX, sMinY, sMaxX, sMaxY);
-          } else if (slabPreviewHatch.hatchType === 'vertical') {
-            renderCtx.drawLineFamilySimple(90, sSpacing, sMinX, sMinY, sMaxX, sMaxY);
-          }
-        }
-        ctx.restore();
-      }
-    }
+    // Slab preview: outline only, no fill/hatch during placement
 
     for (const pt of slabPts) {
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 3 / renderCtx.currentZoom, 0, Math.PI * 2);
+      ctx.fillStyle = COLORS.commandPreview;
+      ctx.fill();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 12b. Slab-opening preview
+// ---------------------------------------------------------------------------
+
+function drawSlabOpeningPreview(
+  renderCtx: ShapeRenderContext,
+  ctx: CanvasRenderingContext2D,
+  preview: any,
+  _style: any,
+  _invertColors: boolean,
+): void {
+  const soPts = preview.points;
+  const soCurrent = preview.currentPoint;
+  const allSoPts = [...soPts, soCurrent];
+
+  if (allSoPts.length >= 2) {
+    // Draw closed outline
+    ctx.beginPath();
+    ctx.moveTo(allSoPts[0].x, allSoPts[0].y);
+    for (let si = 1; si < allSoPts.length; si++) {
+      ctx.lineTo(allSoPts[si].x, allSoPts[si].y);
+    }
+    ctx.lineTo(allSoPts[0].x, allSoPts[0].y);
+    ctx.closePath();
+    ctx.stroke();
+
+    // Draw cross from bounding box corners (preview)
+    if (allSoPts.length >= 3) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of allSoPts) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(allSoPts[0].x, allSoPts[0].y);
+      for (let si = 1; si < allSoPts.length; si++) {
+        ctx.lineTo(allSoPts[si].x, allSoPts[si].y);
+      }
+      ctx.closePath();
+      ctx.clip();
+      ctx.beginPath();
+      ctx.moveTo(minX, minY);
+      ctx.lineTo(maxX, maxY);
+      ctx.moveTo(maxX, minY);
+      ctx.lineTo(minX, maxY);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Draw vertex dots
+    for (const pt of soPts) {
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, 3 / renderCtx.currentZoom, 0, Math.PI * 2);
       ctx.fillStyle = COLORS.commandPreview;
@@ -1198,6 +1214,125 @@ function drawSpotElevationPreview(
   ctx.restore();
 }
 
+// ---------------------------------------------------------------------------
+// Slab Label preview
+// ---------------------------------------------------------------------------
+
+function drawSlabLabelPreview(
+  renderCtx: ShapeRenderContext,
+  ctx: CanvasRenderingContext2D,
+  preview: any,
+  _style: any,
+  invertColors: boolean,
+): void {
+  const { position, floorType, customTypeName, thickness, spanDirection, fontSize, arrowLength } = preview;
+  if (!position) return;
+
+  let textColor = _style?.strokeColor || '#ffffff';
+  if (invertColors && textColor === '#ffffff') textColor = '#000000';
+
+  // Resolve display name
+  const FLOOR_TYPES: Record<string, string> = {
+    'kanaalplaatvloer': 'Kanaalplaatvloer',
+    'breedplaatvloer': 'Breedplaatvloer',
+    'ribcassettevloer': 'Ribcassettevloer',
+    'staalplaatbetonvloer': 'Staalplaatbetonvloer',
+    'massieve-vloer': 'Massieve vloer',
+    'houten-vloer': 'Houten vloer',
+    'predallen': 'Predallen',
+    'custom': 'Overig',
+  };
+  const typeName = floorType === 'custom'
+    ? (customTypeName || 'Custom')
+    : (FLOOR_TYPES[floorType] || floorType);
+
+  const spanAngleRad = ((spanDirection ?? 0) * Math.PI) / 180;
+  const fs = fontSize || 150;
+  const aLen = arrowLength || 1000;
+
+  ctx.save();
+  ctx.translate(position.x, position.y);
+  ctx.globalAlpha = 0.6;
+
+  // --- Span direction arrows ---
+  const halfLen = aLen / 2;
+  const arrowHeadLen = Math.min(halfLen * 0.2, fs * 1.0);
+  const arrowHeadWidth = arrowHeadLen * 0.5;
+  const arrowSpacing = fs * 1.5;
+
+  ctx.strokeStyle = textColor;
+  ctx.fillStyle = textColor;
+  ctx.lineWidth = renderCtx.getLineWidth ? renderCtx.getLineWidth(1) : 1;
+  ctx.setLineDash([]);
+
+  const dx = Math.cos(spanAngleRad);
+  const dy = Math.sin(spanAngleRad);
+  const perpX = -dy;
+  const perpY = dx;
+
+  for (const offset of [-arrowSpacing, arrowSpacing]) {
+    const ocx = perpX * offset;
+    const ocy = perpY * offset;
+    const startX = ocx - dx * halfLen;
+    const startY = ocy - dy * halfLen;
+    const endX = ocx + dx * halfLen;
+    const endY = ocy + dy * halfLen;
+
+    ctx.beginPath();
+    ctx.moveTo(startX + dx * arrowHeadLen, startY + dy * arrowHeadLen);
+    ctx.lineTo(endX - dx * arrowHeadLen, endY - dy * arrowHeadLen);
+    ctx.stroke();
+
+    // Start arrowhead
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(startX + dx * arrowHeadLen + perpX * arrowHeadWidth, startY + dy * arrowHeadLen + perpY * arrowHeadWidth);
+    ctx.lineTo(startX + dx * arrowHeadLen - perpX * arrowHeadWidth, startY + dy * arrowHeadLen - perpY * arrowHeadWidth);
+    ctx.closePath();
+    ctx.fill();
+
+    // End arrowhead
+    ctx.beginPath();
+    ctx.moveTo(endX, endY);
+    ctx.lineTo(endX - dx * arrowHeadLen + perpX * arrowHeadWidth, endY - dy * arrowHeadLen + perpY * arrowHeadWidth);
+    ctx.lineTo(endX - dx * arrowHeadLen - perpX * arrowHeadWidth, endY - dy * arrowHeadLen - perpY * arrowHeadWidth);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // --- Label text ---
+  const fontStyle = `${fs}px ${CAD_DEFAULT_FONT}`;
+  ctx.font = fontStyle;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const line1 = typeName;
+  const line2 = `${thickness} mm`;
+  const lineSpacing = fs * 1.3;
+
+  const bgPadding = fs * 0.3;
+  const maxTextWidth = Math.max(ctx.measureText(line1).width, ctx.measureText(line2).width);
+  const bgWidth = maxTextWidth + bgPadding * 2;
+  const bgHeight = lineSpacing * 2 + bgPadding * 2;
+
+  let bgColor = '#1a1a2e';
+  if (invertColors) bgColor = '#ffffff';
+  ctx.fillStyle = bgColor;
+  ctx.globalAlpha = 0.4;
+  ctx.fillRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight);
+
+  ctx.globalAlpha = 0.6;
+  ctx.strokeStyle = textColor;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight);
+
+  ctx.fillStyle = textColor;
+  ctx.fillText(line1, 0, -lineSpacing * 0.5);
+  ctx.fillText(line2, 0, lineSpacing * 0.5);
+
+  ctx.restore();
+}
+
 // ===========================================================================
 // Registry registrations
 // ===========================================================================
@@ -1205,7 +1340,7 @@ function drawSpotElevationPreview(
 const PREVIEW_TYPES = [
   'beam', 'gridline', 'level', 'puntniveau', 'pile', 'cpt',
   'wall', 'wall-rectangle', 'beam-rectangle', 'wall-circle',
-  'beam-circle', 'slab', 'plate-system', 'section-callout', 'spot-elevation',
+  'beam-circle', 'slab', 'slab-opening', 'slab-label', 'plate-system', 'section-callout', 'spot-elevation',
 ] as const;
 
 export function registerPreviewRenderers(): void {
@@ -1267,6 +1402,16 @@ export function registerPreviewRenderers(): void {
   shapePreviewRegistry.register('slab', (ctx, preview, style, _viewport, invertColors, renderCtx) => {
     if (!renderCtx) return;
     drawSlabPreview(renderCtx, ctx, preview, style, invertColors);
+  });
+
+  shapePreviewRegistry.register('slab-opening', (ctx, preview, style, _viewport, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawSlabOpeningPreview(renderCtx, ctx, preview, style, invertColors);
+  });
+
+  shapePreviewRegistry.register('slab-label', (ctx, preview, style, _viewport, invertColors, renderCtx) => {
+    if (!renderCtx) return;
+    drawSlabLabelPreview(renderCtx, ctx, preview, style, invertColors);
   });
 
   shapePreviewRegistry.register('plate-system', (ctx, preview, style, _viewport, invertColors, renderCtx) => {

@@ -1,8 +1,8 @@
-import { shapeHandleRegistry, bulgeArcMidpoint } from 'open-2d-studio';
+import { shapeHandleRegistry, bulgeArcMidpoint, useAppStore } from 'open-2d-studio';
 import type {
-  PuntniveauShape, PileShape, CPTShape, FoundationZoneShape,
-  SlabShape, PlateSystemShape, SectionCalloutShape, SpaceShape,
-  SpotElevationShape,
+  PuntniveauShape, PileShape, ColumnShape, CPTShape, FoundationZoneShape,
+  SlabShape, SlabLabelShape, PlateSystemShape, SectionCalloutShape, SpaceShape,
+  SpotElevationShape, WallShape, WallOpeningShape, RebarShape,
 } from 'open-2d-studio';
 
 function startEndMidpoints(shape: any): { x: number; y: number }[] {
@@ -14,9 +14,9 @@ function startEndMidpoints(shape: any): { x: number; y: number }[] {
 }
 
 const SHAPE_TYPES = [
-  'beam', 'gridline', 'level', 'puntniveau', 'pile', 'cpt',
-  'foundation-zone', 'wall', 'slab', 'plate-system',
-  'section-callout', 'space', 'spot-elevation',
+  'beam', 'gridline', 'level', 'puntniveau', 'pile', 'column', 'cpt',
+  'foundation-zone', 'wall', 'wall-opening', 'slab', 'slab-opening', 'slab-label', 'plate-system',
+  'section-callout', 'space', 'spot-elevation', 'rebar',
 ] as const;
 
 export function registerHandlePoints(): void {
@@ -32,6 +32,10 @@ export function registerHandlePoints(): void {
     return [(shape as PileShape).position];
   });
 
+  shapeHandleRegistry.register('column', (shape) => {
+    return [(shape as ColumnShape).position];
+  });
+
   shapeHandleRegistry.register('cpt', (shape) => {
     return [(shape as CPTShape).position];
   });
@@ -42,6 +46,23 @@ export function registerHandlePoints(): void {
 
   shapeHandleRegistry.register('wall', (shape) => startEndMidpoints(shape));
 
+  shapeHandleRegistry.register('wall-opening', (shape) => {
+    const wo = shape as WallOpeningShape;
+    const allShapes = useAppStore.getState().shapes;
+    const hostWall = allShapes.find(s => s.id === wo.hostWallId) as WallShape | undefined;
+    if (!hostWall) return [];
+    const dx = hostWall.end.x - hostWall.start.x;
+    const dy = hostWall.end.y - hostWall.start.y;
+    const wallLen = Math.sqrt(dx * dx + dy * dy);
+    if (wallLen < 0.001) return [];
+    const dirX = dx / wallLen;
+    const dirY = dy / wallLen;
+    return [{
+      x: hostWall.start.x + dirX * wo.positionAlongWall,
+      y: hostWall.start.y + dirY * wo.positionAlongWall,
+    }];
+  });
+
   shapeHandleRegistry.register('slab', (shape) => {
     const slabS = shape as SlabShape;
     const handles: { x: number; y: number }[] = [...slabS.points];
@@ -50,6 +71,19 @@ export function registerHandlePoints(): void {
       handles.push({
         x: (slabS.points[i].x + slabS.points[j].x) / 2,
         y: (slabS.points[i].y + slabS.points[j].y) / 2,
+      });
+    }
+    return handles;
+  });
+
+  shapeHandleRegistry.register('slab-opening', (shape) => {
+    const soS = shape as SlabShape; // same point-based structure
+    const handles: { x: number; y: number }[] = [...soS.points];
+    for (let i = 0; i < soS.points.length; i++) {
+      const j = (i + 1) % soS.points.length;
+      handles.push({
+        x: (soS.points[i].x + soS.points[j].x) / 2,
+        y: (soS.points[i].y + soS.points[j].y) / 2,
       });
     }
     return handles;
@@ -96,11 +130,24 @@ export function registerHandlePoints(): void {
     return [(shape as SpaceShape).labelPosition];
   });
 
+  shapeHandleRegistry.register('slab-label', (shape) => {
+    return [(shape as SlabLabelShape).position];
+  });
+
   shapeHandleRegistry.register('spot-elevation', (shape) => {
     return [
       (shape as SpotElevationShape).position,
       (shape as SpotElevationShape).labelPosition,
     ];
+  });
+
+  shapeHandleRegistry.register('rebar', (shape) => {
+    const rebar = shape as RebarShape;
+    const handles = [rebar.position];
+    if (rebar.viewMode === 'longitudinal' && rebar.endPoint) {
+      handles.push(rebar.endPoint);
+    }
+    return handles;
   });
 }
 

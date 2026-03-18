@@ -5,10 +5,12 @@
  * so ifcGenerator can delegate without hard-coded switch cases.
  */
 
-import { ifcExportRegistry, createCurveAnnotation } from 'open-2d-studio';
+import { ifcExportRegistry, createCurveAnnotation, useAppStore } from 'open-2d-studio';
 import type {
   WallShape,
   BeamShape,
+  ColumnShape,
+  ColumnMaterial,
   SlabShape,
   PileShape,
   CPTShape,
@@ -17,10 +19,11 @@ import type {
   PuntniveauShape,
   SectionCalloutShape,
   SpaceShape,
+  RebarShape,
   MaterialCategory,
 } from 'open-2d-studio';
 
-const IFC_TYPES = ['wall', 'beam', 'slab', 'pile', 'cpt', 'gridline', 'level', 'puntniveau', 'section-callout', 'space'] as const;
+const IFC_TYPES = ['wall', 'wall-opening', 'beam', 'column', 'slab', 'pile', 'cpt', 'gridline', 'level', 'puntniveau', 'section-callout', 'space', 'rebar'] as const;
 
 export function registerIfcExport(): void {
 
@@ -62,8 +65,10 @@ export function registerIfcExport(): void {
     const wallMatId = ctx.materials.getOrCreate(wallMaterialKey);
     const wallLayer = b.addMaterialLayer(wallMatId, wall.thickness, null, 'Wall Layer');
     const wallLayerSet = b.addMaterialLayerSet([wallLayer], `${wall.label || 'Wall'} LayerSet`);
+    // "Left justified" = left face on draw line (offset=0, layers extend right/positive)
+    // "Right justified" = right face on draw line (offset=-thickness, layers extend left/negative)
     const wallOffset = wall.justification === 'center' ? -wall.thickness / 2
-      : wall.justification === 'left' ? -wall.thickness : 0;
+      : wall.justification === 'left' ? 0 : -wall.thickness;
     const wallLayerSetUsage = b.addMaterialLayerSetUsage(wallLayerSet, 'AXIS2', 'POSITIVE', wallOffset);
     ctx.layerSetUsageAssociations.push({ elementIds: [wallEntityId], usageId: wallLayerSetUsage });
 
@@ -82,6 +87,58 @@ export function registerIfcExport(): void {
       b.addPropertySingleValue('Height', null, ctx.ifcPositiveLengthMeasure(wallHeight), ctx.lengthUnit),
       b.addPropertySingleValue('GrossVolume', null, ctx.ifcVolumeMeasure(length * wall.thickness * wallHeight / 1e9), ctx.volumeUnit),
       b.addPropertySingleValue('GrossSideArea', null, ctx.ifcAreaMeasure(length * wallHeight / 1e6), ctx.areaUnit),
+    ]);
+  });
+
+  // ---------- Wall Opening ----------
+
+  ifcExportRegistry.register('wall-opening', (shape, ctx) => {
+    const wo = shape as any;
+    const b = ctx.builder;
+
+    // Find the host wall to determine geometry
+    const allShapes = useAppStore.getState().shapes;
+    const hostWall = allShapes.find((s: any) => s.id === wo.hostWallId) as WallShape | undefined;
+    if (!hostWall) return;
+
+    const dx = hostWall.end.x - hostWall.start.x;
+    const dy = hostWall.end.y - hostWall.start.y;
+    const wallLength = Math.sqrt(dx * dx + dy * dy);
+    if (wallLength < 0.001) return;
+
+    const wallAngle = Math.atan2(dy, dx);
+
+    // Opening placement: along the wall, offset by positionAlongWall
+    const dirX = dx / wallLength;
+    const dirY = dy / wallLength;
+    const openingCenterX = hostWall.start.x + dirX * wo.positionAlongWall;
+    const openingCenterY = hostWall.start.y + dirY * wo.positionAlongWall;
+
+    // Body representation: extruded rectangle (width x height) through wall thickness
+    const openingProfileCenter = b.addCartesianPoint2D(0, 0);
+    const openingProfilePlacement = b.addAxis2Placement2D(openingProfileCenter);
+    const openingProfile = b.addRectangleProfileDef('.AREA.', null, openingProfilePlacement, wo.width, wo.height);
+    const openingSolid = b.addExtrudedAreaSolid(openingProfile, ctx.identityPlacement, ctx.extrusionDir, hostWall.thickness);
+    const openingBodyRep = b.addShapeRepresentation(ctx.bodySubContext, 'Body', 'SweptSolid', [openingSolid]);
+    const openingProdShape = b.addProductDefinitionShape(null, null, [openingBodyRep]);
+
+    // Place at the opening center, at sill height
+    const placement = ctx.createElementPlacement(
+      openingCenterX, openingCenterY, wo.sillHeight, wallAngle
+    );
+
+    const openingEntityId = b.addOpeningElement(
+      ctx.shapeToIfcGuid(wo.id), ctx.ownerHistoryId,
+      wo.label || 'Opening', placement, openingProdShape
+    );
+    ctx.addElementToStorey(openingEntityId, ctx.resolveStoreyForShape(wo));
+
+    // Pset for opening
+    ctx.assignPropertySet(openingEntityId, wo.id, 'pset', 'Open2DStudio_WallOpening', 'Wall opening properties', [
+      b.addPropertySingleValue('Width', null, ctx.ifcPositiveLengthMeasure(wo.width), ctx.lengthUnit),
+      b.addPropertySingleValue('Height', null, ctx.ifcPositiveLengthMeasure(wo.height), ctx.lengthUnit),
+      b.addPropertySingleValue('SillHeight', null, ctx.ifcLengthMeasure(wo.sillHeight), ctx.lengthUnit),
+      b.addPropertySingleValue('HostWallId', null, ctx.ifcLabel(wo.hostWallId), null),
     ]);
   });
 
@@ -155,6 +212,58 @@ export function registerIfcExport(): void {
       beamDimProps.push(b.addPropertySingleValue('PresetName', null, ctx.ifcLabel(beam.presetName), null));
     }
     ctx.assignPropertySet(beamEntityId, beam.id, 'dims', 'Open2DStudio_BeamDimensions', 'Beam profile dimensions from Open 2D Studio', beamDimProps);
+  });
+
+  // ---------- Column ----------
+
+  ifcExportRegistry.register('column', (shape, ctx) => {
+    const col = shape as ColumnShape;
+    const b = ctx.builder;
+
+    const colWidth = col.width;
+    const colDepth = col.depth;
+    const colHeight = 3000; // Default column height
+
+    // Body representation: extruded rectangle
+    const colProfile = b.addRectangleProfileDef('.AREA.', null, ctx.profilePlacement2D, colWidth, colDepth);
+    const colSolid = b.addExtrudedAreaSolid(colProfile, ctx.identityPlacement, ctx.extrusionDir, colHeight);
+    const colBodyRep = b.addShapeRepresentation(ctx.bodySubContext, 'Body', 'SweptSolid', [colSolid]);
+    const colProdShape = b.addProductDefinitionShape(null, null, [colBodyRep]);
+
+    const placement = ctx.createElementPlacement(col.position.x, col.position.y, 0, col.rotation || 0);
+    const colName = col.profile || `Column ${colWidth}x${colDepth}`;
+
+    const colEntityId = b.addColumn(
+      ctx.shapeToIfcGuid(col.id), ctx.ownerHistoryId, colName,
+      placement, colProdShape
+    );
+    ctx.addElementToStorey(colEntityId, ctx.resolveStoreyForShape(col));
+
+    // Material
+    const colMatId = ctx.materials.getOrCreate(col.material as MaterialCategory);
+    ctx.materialAssociations.push({ elementIds: [colEntityId], materialId: colMatId });
+
+    // Pset_ColumnCommon
+    ctx.assignPropertySet(colEntityId, col.id, 'pset', 'Pset_ColumnCommon', 'Common column properties', [
+      b.addPropertySingleValue('Reference', null, ctx.ifcIdentifier(colName), null),
+      b.addPropertySingleValue('IsExternal', null, ctx.ifcBoolean(false), null),
+      b.addPropertySingleValue('LoadBearing', null, ctx.ifcBoolean(true), null),
+    ]);
+
+    // Open2DStudio_ColumnDimensions
+    const colDimProps: number[] = [
+      b.addPropertySingleValue('Width', null, ctx.ifcPositiveLengthMeasure(colWidth), ctx.lengthUnit),
+      b.addPropertySingleValue('Depth', null, ctx.ifcPositiveLengthMeasure(colDepth), ctx.lengthUnit),
+      b.addPropertySingleValue('Height', null, ctx.ifcPositiveLengthMeasure(colHeight), ctx.lengthUnit),
+      b.addPropertySingleValue('Material', null, ctx.ifcLabel(ctx.getMaterialDisplayName(col.material)), null),
+    ];
+    if (col.profile) {
+      colDimProps.push(b.addPropertySingleValue('Profile', null, ctx.ifcLabel(col.profile), null));
+    }
+    if (col.section) {
+      colDimProps.push(b.addPropertySingleValue('Section', null, ctx.ifcLabel(col.section), null));
+    }
+    ctx.assignPropertySet(colEntityId, col.id, 'dims', 'Open2DStudio_ColumnDimensions', 'Column dimensions from Open 2D Studio', colDimProps);
   });
 
   // ---------- Slab ----------
@@ -505,6 +614,57 @@ export function registerIfcExport(): void {
       scProps.push(b.addPropertySingleValue('TargetDrawingId', null, ctx.ifcLabel(sc.targetDrawingId), null));
     }
     ctx.assignPropertySet(annotationId, sc.id, 'pset', 'Open2DStudio_Annotation', 'Section callout annotation properties', scProps);
+  });
+
+  // ---------- Rebar (IfcReinforcingBar) ----------
+
+  ifcExportRegistry.register('rebar', (shape, ctx) => {
+    const rebar = shape as RebarShape;
+    const b = ctx.builder;
+
+    const radius = rebar.diameter / 2;
+    const barLength = rebar.length || 1000; // Default 1m if not specified
+
+    // Body representation: extruded circle
+    const rebarProfile = b.addCircleProfileDef('.AREA.', null, ctx.profilePlacement2D, radius);
+    const rebarSolid = b.addExtrudedAreaSolid(rebarProfile, ctx.identityPlacement, ctx.extrusionDir, barLength);
+    const rebarBodyRep = b.addShapeRepresentation(ctx.bodySubContext, 'Body', 'SweptSolid', [rebarSolid]);
+    const rebarProdShape = b.addProductDefinitionShape(null, null, [rebarBodyRep]);
+
+    const rebarPlacePt = b.addCartesianPoint(rebar.position.x, rebar.position.y, 0);
+    const rebarAxisPlace = b.addAxis2Placement3D(rebarPlacePt, ctx.zDir, ctx.xDir);
+    const rebarPlacement = b.addLocalPlacement(ctx.defaultStoreyPlacement, rebarAxisPlace);
+
+    const rebarName = rebar.barMark || 'Rebar';
+    const rebarEntityId = b.addBuildingElementProxy(
+      ctx.shapeToIfcGuid(rebar.id), ctx.ownerHistoryId,
+      rebarName, 'IfcReinforcingBar',
+      rebarPlacement, rebarProdShape,
+      'USERDEFINED'
+    );
+    ctx.addElementToStorey(rebarEntityId, ctx.resolveStoreyForShape(rebar));
+
+    // Material: always steel for rebar
+    const rebarMatId = ctx.materials.getOrCreate('steel');
+    ctx.materialAssociations.push({ elementIds: [rebarEntityId], materialId: rebarMatId });
+
+    // Custom property set
+    const rebarProps: number[] = [
+      b.addPropertySingleValue('ShapeType', null, ctx.ifcLabel('rebar'), null),
+      b.addPropertySingleValue('BarMark', null, ctx.ifcLabel(rebar.barMark), null),
+      b.addPropertySingleValue('Diameter', null, ctx.ifcPositiveLengthMeasure(rebar.diameter), ctx.lengthUnit),
+      b.addPropertySingleValue('BarLength', null, ctx.ifcPositiveLengthMeasure(barLength), ctx.lengthUnit),
+    ];
+    if (rebar.count != null) {
+      rebarProps.push(b.addPropertySingleValue('Count', null, ctx.ifcLabel(String(rebar.count)), null));
+    }
+    if (rebar.spacing != null) {
+      rebarProps.push(b.addPropertySingleValue('Spacing', null, ctx.ifcPositiveLengthMeasure(rebar.spacing), ctx.lengthUnit));
+    }
+    if (rebar.bendShape) {
+      rebarProps.push(b.addPropertySingleValue('BendShape', null, ctx.ifcLabel(rebar.bendShape), null));
+    }
+    ctx.assignPropertySet(rebarEntityId, rebar.id, 'pset', 'Open2DStudio_Rebar', 'Reinforcing bar properties from Open 2D Studio', rebarProps);
   });
 
   // ---------- Space ----------

@@ -1,13 +1,19 @@
-import { Square, Circle, Palette, Settings, Layers, FolderTree, Shapes } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import { Square, Circle, Palette, Settings, Layers, FolderTree, Shapes, FileText, FileBarChart, DoorOpen, CircleDot } from 'lucide-react';
 import {
   useAppStore,
   LineIcon, ArcIcon, BeamIcon, GridLineIcon, LevelIcon,
-  SectionDetailIcon, PileIcon, PuntniveauIcon, CPTIcon, WallIcon,
-  SlabIcon, SpaceIcon, LabelIcon, MiterJoinIcon, PlateSystemIcon,
+  SectionDetailIcon, PileIcon, ColumnIcon, PuntniveauIcon, CPTIcon, WallIcon,
+  SlabIcon, SlabOpeningIcon, SlabLabelIcon, SpaceIcon, LabelIcon, MiterJoinIcon, PlateSystemIcon,
   SpotElevationIcon,
   RibbonButton, RibbonSmallButton, RibbonGroup,
   getNextSectionLabel,
+  showPdfFileDialog,
+  renderPdfPageForUnderlay,
+  PdfUnderlayDialog,
 } from 'open-2d-studio';
+import type { ImageShape, CPTShape } from 'open-2d-studio';
+import { showCPTFileDialog, parseCPTFile } from './cptFileService';
 
 type ShapeMode = 'line' | 'arc' | 'rectangle' | 'circle';
 
@@ -44,6 +50,97 @@ function ShapeModeSelector({ mode, onChange }: { mode: ShapeMode; onChange: (mod
   );
 }
 
+/**
+ * PDF Underlay button + dialog.
+ * Self-contained: manages the dialog open/close state, the PDF data,
+ * and creates the ImageShape when the user selects a page.
+ */
+function PdfUnderlayButton({ disabled }: { disabled?: boolean }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [pdfData, setPdfData] = useState<ArrayBuffer | null>(null);
+  const [fileName, setFileName] = useState<string>('');
+
+  const handleClick = useCallback(async () => {
+    try {
+      const result = await showPdfFileDialog();
+      if (!result) return;
+      setPdfData(result.data);
+      // Extract just the filename from the path
+      const name = result.filePath.replace(/\\/g, '/').split('/').pop() || result.filePath;
+      setFileName(name);
+      setDialogOpen(true);
+    } catch (err) {
+      console.error('Failed to open PDF:', err);
+    }
+  }, []);
+
+  const handlePlace = useCallback(async (pageNumber: number) => {
+    if (!pdfData) return;
+    setDialogOpen(false);
+
+    try {
+      const result = await renderPdfPageForUnderlay(pdfData, pageNumber, 150);
+      const { activeLayerId, activeDrawingId, addShapes, viewport } = useAppStore.getState();
+
+      // Place the underlay centered at the current viewport center
+      const centerX = -viewport.offsetX + (window.innerWidth / 2) / viewport.zoom;
+      const centerY = -viewport.offsetY + (window.innerHeight / 2) / viewport.zoom;
+
+      const imageShape: ImageShape = {
+        id: crypto.randomUUID(),
+        type: 'image',
+        layerId: activeLayerId,
+        drawingId: activeDrawingId,
+        style: { strokeColor: '#ffffff', strokeWidth: 1, lineStyle: 'solid' },
+        visible: true,
+        locked: false,
+        position: {
+          x: centerX - result.worldWidth / 2,
+          y: centerY - result.worldHeight / 2,
+        },
+        width: result.worldWidth,
+        height: result.worldHeight,
+        rotation: 0,
+        imageData: result.dataUrl,
+        originalWidth: result.pixelWidth,
+        originalHeight: result.pixelHeight,
+        opacity: 1,
+        maintainAspectRatio: true,
+        isUnderlay: true,
+        sourceFileName: fileName ? `${fileName} (page ${pageNumber})` : `PDF page ${pageNumber}`,
+      };
+
+      addShapes([imageShape]);
+    } catch (err) {
+      console.error('Failed to render PDF page for underlay:', err);
+    }
+  }, [pdfData, fileName]);
+
+  const handleClose = useCallback(() => {
+    setDialogOpen(false);
+  }, []);
+
+  return (
+    <>
+      <RibbonButton
+        icon={<FileText size={24} />}
+        label="PDF Underlay"
+        onClick={handleClick}
+        disabled={disabled}
+        tooltip="Import a PDF page as a background underlay image"
+        shortcut="PU"
+      />
+      <PdfUnderlayDialog
+        isOpen={dialogOpen}
+        onClose={handleClose}
+        pdfData={pdfData}
+        fileName={fileName}
+        onPlace={handlePlace}
+      />
+    </>
+  );
+}
+
 function StructuralTabContent() {
   const {
     activeTool,
@@ -53,9 +150,12 @@ function StructuralTabContent() {
     setPendingGridline,
     setPendingLevel,
     setPendingPile,
+    setPendingColumn,
     setPendingCPT,
     setPendingWall,
     setPendingSlab,
+    setPendingSlabOpening,
+    setPendingSlabLabel,
     setPendingSectionCallout,
     setPendingSpace,
     setPendingPlateSystem,
@@ -64,6 +164,7 @@ function StructuralTabContent() {
     pendingBeam,
     setPendingBeam,
     pendingSlab,
+    pendingSlabOpening,
     pendingPlateSystem,
     lastUsedWallTypeId,
     wallTypes,
@@ -136,14 +237,25 @@ function StructuralTabContent() {
           shortcut="WA"
         />
         <RibbonButton
+          icon={<DoorOpen size={24} />}
+          label="Opening"
+          onClick={() => {
+            switchToDrawingTool('wall-opening');
+          }}
+          active={activeTool === 'wall-opening'}
+          disabled={isSheetMode}
+          tooltip="Place IfcOpeningElement in a wall (click on wall to place)"
+          shortcut="WO"
+        />
+        <RibbonButton
           icon={<SlabIcon size={24} />}
           label="IfcSlab"
           onClick={() => {
             setPendingSlab({
               thickness: 200,
-              level: '0',
               elevation: 0,
               material: 'concrete',
+              level: undefined,
               shapeMode: 'line',
             });
             switchToDrawingTool('slab');
@@ -152,6 +264,20 @@ function StructuralTabContent() {
           disabled={isSheetMode}
           tooltip="Draw IfcSlab (closed polygon with hatch)"
           shortcut="SL"
+        />
+        <RibbonButton
+          icon={<SlabOpeningIcon size={24} />}
+          label="Slab Opening"
+          onClick={() => {
+            setPendingSlabOpening({
+              shapeMode: 'line',
+            });
+            switchToDrawingTool('slab-opening');
+          }}
+          active={activeTool === 'slab-opening'}
+          disabled={isSheetMode}
+          tooltip="Draw slab opening (hole cut through a floor slab)"
+          shortcut="SO"
         />
         <RibbonButton
           icon={<PlateSystemIcon size={24} />}
@@ -179,6 +305,34 @@ function StructuralTabContent() {
           disabled={isSheetMode}
           tooltip="Place IfcPile (IfcDeepFoundation)"
           shortcut="PI"
+        />
+        <RibbonButton
+          icon={<ColumnIcon size={24} />}
+          label="IfcColumn"
+          onClick={() => {
+            setPendingColumn({
+              width: 300,
+              depth: 300,
+              rotation: 0,
+              material: 'concrete',
+            });
+            switchToDrawingTool('column');
+          }}
+          active={activeTool === 'column'}
+          disabled={isSheetMode}
+          tooltip="Place IfcColumn"
+          shortcut="CO"
+        />
+        <RibbonButton
+          icon={<CircleDot size={24} />}
+          label="IfcRebar"
+          onClick={() => {
+            switchToDrawingTool('rebar');
+          }}
+          active={activeTool === 'rebar'}
+          disabled={isSheetMode}
+          tooltip="Place IfcReinforcingBar (rebar cross-section or longitudinal)"
+          shortcut="RB"
         />
         <RibbonButton
           icon={<CPTIcon size={24} />}
@@ -214,11 +368,12 @@ function StructuralTabContent() {
         />
       </RibbonGroup>
 
-      {(activeTool === 'wall' || activeTool === 'beam' || activeTool === 'slab' || activeTool === 'plate-system') && (() => {
+      {(activeTool === 'wall' || activeTool === 'beam' || activeTool === 'slab' || activeTool === 'slab-opening' || activeTool === 'plate-system') && (() => {
         const mode: ShapeMode =
           activeTool === 'wall' ? (pendingWall?.shapeMode ?? 'line') :
           activeTool === 'beam' ? (pendingBeam?.shapeMode ?? 'line') :
           activeTool === 'slab' ? (pendingSlab?.shapeMode ?? 'line') :
+          activeTool === 'slab-opening' ? (pendingSlabOpening?.shapeMode ?? 'line') :
           (pendingPlateSystem?.shapeMode ?? 'line');
         const handleShapeModeChange = (m: ShapeMode) => {
           clearDrawingPoints();
@@ -229,6 +384,8 @@ function StructuralTabContent() {
             setPendingBeam({ ...pendingBeam, shapeMode: m });
           } else if (activeTool === 'slab' && pendingSlab) {
             setPendingSlab({ ...pendingSlab, shapeMode: m });
+          } else if (activeTool === 'slab-opening' && pendingSlabOpening) {
+            setPendingSlabOpening({ ...pendingSlabOpening, shapeMode: m });
           } else if (activeTool === 'plate-system' && pendingPlateSystem) {
             setPendingPlateSystem({ ...pendingPlateSystem, shapeMode: m });
           }
@@ -239,6 +396,24 @@ function StructuralTabContent() {
       })()}
 
       <RibbonGroup label="Annotations">
+        <RibbonButton
+          icon={<SlabLabelIcon size={24} />}
+          label="Slab Label"
+          onClick={() => {
+            setPendingSlabLabel({
+              floorType: 'kanaalplaatvloer',
+              thickness: 200,
+              spanDirection: 0,
+              fontSize: 150,
+              arrowLength: 1000,
+            });
+            switchToDrawingTool('slab-label');
+          }}
+          active={activeTool === 'slab-label'}
+          disabled={isSheetMode}
+          tooltip="Place structural slab label with floor type and span direction"
+          shortcut="SB"
+        />
         <RibbonButton
           icon={<GridLineIcon size={24} />}
           label="IfcGrid"
@@ -303,6 +478,10 @@ function StructuralTabContent() {
           tooltip="Miter join walls, beams or ducts at intersection (verstek)"
           shortcut="TW"
         />
+      </RibbonGroup>
+
+      <RibbonGroup label="Reference">
+        <PdfUnderlayButton disabled={isSheetMode} />
       </RibbonGroup>
 
       <RibbonGroup label="Properties">
@@ -411,6 +590,44 @@ function PilePlanTabContent() {
           onClick={() => openPileSymbolsDialog()}
           disabled={isSheetMode}
           tooltip="Configure pile symbols and order"
+        />
+      </RibbonGroup>
+
+      <RibbonGroup label="CPT Data">
+        <RibbonButton
+          icon={<FileBarChart size={24} />}
+          label="Parse CPT"
+          onClick={async () => {
+            const { selectedShapeIds, shapes, updateShape } = useAppStore.getState();
+            // Find the first selected CPT shape
+            const cptShape = selectedShapeIds
+              .map(id => shapes.find(s => s.id === id))
+              .find(s => s?.type === 'cpt') as CPTShape | undefined;
+            if (!cptShape) {
+              alert('Select a CPT shape first, then click Parse CPT to load GEF or BRO-XML data.');
+              return;
+            }
+            const result = await showCPTFileDialog();
+            if (!result) return;
+            try {
+              const data = parseCPTFile(result.text, result.fileName);
+              updateShape(cptShape.id, {
+                cptData: {
+                  depth: data.depth,
+                  qc: data.qc,
+                  fs: data.fs,
+                  rf: data.rf,
+                  sourceFile: data.sourceFile,
+                },
+              } as Partial<CPTShape>);
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              alert(`Failed to parse CPT file: ${msg}`);
+            }
+          }}
+          disabled={isSheetMode}
+          tooltip="Load GEF or BRO-XML file and attach CPT data to the selected CPT marker"
+          shortcut="CP"
         />
       </RibbonGroup>
     </div>

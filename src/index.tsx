@@ -18,8 +18,10 @@ import { registerRenderers, unregisterRenderers } from './renderers';
 import { registerPreviewRenderers, unregisterPreviewRenderers } from './previewRenderers';
 import { registerRibbonTabs, unregisterRibbonTabs } from './ribbonTabs';
 import { registerIfcCategories, unregisterIfcCategories } from './ifcCategories';
+import { registerWallOpeningTool, unregisterWallOpeningTool } from './wallOpeningTool';
+import { registerRebarTool, unregisterRebarTool } from './rebarTool';
 
-module.exports = {
+const aecExtension = {
   onLoad() {
     registerBounds();
     registerSnapSegments();
@@ -35,8 +37,12 @@ module.exports = {
     registerPreviewRenderers();
     registerRibbonTabs();
     registerIfcCategories();
+    registerWallOpeningTool();
+    registerRebarTool();
   },
   onUnload() {
+    unregisterRebarTool();
+    unregisterWallOpeningTool();
     unregisterIfcCategories();
     unregisterRibbonTabs();
     unregisterPreviewRenderers();
@@ -53,3 +59,11 @@ module.exports = {
     unregisterBounds();
   },
 };
+
+// ESM export for dev (direct import from Open 2D Studio)
+export default aecExtension;
+
+// CJS export for runtime extension loader
+if (typeof module !== 'undefined') {
+  module.exports = aecExtension;
+}

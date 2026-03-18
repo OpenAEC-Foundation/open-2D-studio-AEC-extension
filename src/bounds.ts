@@ -1,10 +1,10 @@
 import type {
-  BeamShape, GridlineShape, LevelShape, PileShape, WallShape,
-  SlabShape, PuntniveauShape, SpaceShape, PlateSystemShape,
-  SectionCalloutShape, SpotElevationShape, CPTShape, FoundationZoneShape,
+  BeamShape, GridlineShape, LevelShape, PileShape, ColumnShape, WallShape, WallOpeningShape,
+  SlabShape, SlabOpeningShape, SlabLabelShape, PuntniveauShape, SpaceShape, PlateSystemShape,
+  SectionCalloutShape, SpotElevationShape, CPTShape, FoundationZoneShape, RebarShape,
   ShapeBounds,
 } from 'open-2d-studio';
-import { annotationScaleFactor, bulgeArcBounds, boundsRegistry } from 'open-2d-studio';
+import { annotationScaleFactor, bulgeArcBounds, boundsRegistry, useAppStore } from 'open-2d-studio';
 
 function getBeamBounds(shape: any, _drawingScale?: number): ShapeBounds | null {
   const { start, end, flangeWidth } = shape as BeamShape;
@@ -81,6 +81,28 @@ function getPileBounds(shape: any): ShapeBounds | null {
   };
 }
 
+function getColumnBounds(shape: any): ShapeBounds | null {
+  const col = shape as ColumnShape;
+  const halfW = col.width / 2;
+  const halfD = col.depth / 2;
+  // For rotated columns, use bounding circle
+  if (col.rotation && Math.abs(col.rotation) > 0.001) {
+    const r = Math.sqrt(halfW * halfW + halfD * halfD);
+    return {
+      minX: col.position.x - r,
+      minY: col.position.y - r,
+      maxX: col.position.x + r,
+      maxY: col.position.y + r,
+    };
+  }
+  return {
+    minX: col.position.x - halfW,
+    minY: col.position.y - halfD,
+    maxX: col.position.x + halfW,
+    maxY: col.position.y + halfD,
+  };
+}
+
 function getCptBounds(shape: any, drawingScale?: number): ShapeBounds | null {
   const cptShape = shape as CPTShape;
   const cptSf = annotationScaleFactor(drawingScale);
@@ -128,11 +150,13 @@ function getWallBounds(shape: any): ShapeBounds | null {
   let wLeftThick: number;
   let wRightThick: number;
   if (wallShape.justification === 'left') {
-    wLeftThick = 0;
-    wRightThick = wallShape.thickness;
-  } else if (wallShape.justification === 'right') {
+    // "Left justified" = left face on draw line, wall extends to the right
     wLeftThick = wallShape.thickness;
     wRightThick = 0;
+  } else if (wallShape.justification === 'right') {
+    // "Right justified" = right face on draw line, wall extends to the left
+    wLeftThick = 0;
+    wRightThick = wallShape.thickness;
   } else {
     wLeftThick = wallShape.thickness / 2;
     wRightThick = wallShape.thickness / 2;
@@ -163,6 +187,31 @@ function getSlabBounds(shape: any): ShapeBounds | null {
     minY: Math.min(...sys),
     maxX: Math.max(...sxs),
     maxY: Math.max(...sys),
+  };
+}
+
+function getSlabOpeningBounds(shape: any): ShapeBounds | null {
+  const soShape = shape as SlabOpeningShape;
+  if (soShape.points.length === 0) return null;
+  const soxs = soShape.points.map(p => p.x);
+  const soys = soShape.points.map(p => p.y);
+  return {
+    minX: Math.min(...soxs),
+    minY: Math.min(...soys),
+    maxX: Math.max(...soxs),
+    maxY: Math.max(...soys),
+  };
+}
+
+function getSlabLabelBounds(shape: any): ShapeBounds | null {
+  const sl = shape as SlabLabelShape;
+  const halfArrow = sl.arrowLength / 2;
+  const margin = sl.fontSize * 2;
+  return {
+    minX: sl.position.x - halfArrow - margin,
+    minY: sl.position.y - halfArrow - margin,
+    maxX: sl.position.x + halfArrow + margin,
+    maxY: sl.position.y + halfArrow + margin,
   };
 }
 
@@ -243,10 +292,74 @@ function getSpotElevationBounds(shape: any, drawingScale?: number): ShapeBounds 
   };
 }
 
+function getWallOpeningBounds(shape: any): ShapeBounds | null {
+  const wo = shape as WallOpeningShape;
+  const allShapes = useAppStore.getState().shapes;
+  const hostWall = allShapes.find(s => s.id === wo.hostWallId) as WallShape | undefined;
+  if (!hostWall) return null;
+
+  const dx = hostWall.end.x - hostWall.start.x;
+  const dy = hostWall.end.y - hostWall.start.y;
+  const wallLen = Math.sqrt(dx * dx + dy * dy);
+  if (wallLen < 0.001) return null;
+
+  const dirX = dx / wallLen;
+  const dirY = dy / wallLen;
+  const perpX = -dirY;
+  const perpY = dirX;
+
+  let leftThick: number;
+  let rightThick: number;
+  if (hostWall.justification === 'left') { leftThick = 0; rightThick = hostWall.thickness; }
+  else if (hostWall.justification === 'right') { leftThick = hostWall.thickness; rightThick = 0; }
+  else { leftThick = hostWall.thickness / 2; rightThick = hostWall.thickness / 2; }
+
+  const halfW = wo.width / 2;
+  const startAlong = wo.positionAlongWall - halfW;
+  const endAlong = wo.positionAlongWall + halfW;
+
+  const corners = [
+    { x: hostWall.start.x + dirX * startAlong + perpX * leftThick, y: hostWall.start.y + dirY * startAlong + perpY * leftThick },
+    { x: hostWall.start.x + dirX * endAlong + perpX * leftThick, y: hostWall.start.y + dirY * endAlong + perpY * leftThick },
+    { x: hostWall.start.x + dirX * endAlong - perpX * rightThick, y: hostWall.start.y + dirY * endAlong - perpY * rightThick },
+    { x: hostWall.start.x + dirX * startAlong - perpX * rightThick, y: hostWall.start.y + dirY * startAlong - perpY * rightThick },
+  ];
+
+  const xs = corners.map(c => c.x);
+  const ys = corners.map(c => c.y);
+  return {
+    minX: Math.min(...xs),
+    minY: Math.min(...ys),
+    maxX: Math.max(...xs),
+    maxY: Math.max(...ys),
+  };
+}
+
+function getRebarBounds(shape: any): ShapeBounds | null {
+  const rebar = shape as RebarShape;
+  const r = rebar.diameter / 2;
+  if (rebar.viewMode === 'longitudinal' && rebar.endPoint) {
+    return {
+      minX: Math.min(rebar.position.x, rebar.endPoint.x) - r,
+      minY: Math.min(rebar.position.y, rebar.endPoint.y) - r,
+      maxX: Math.max(rebar.position.x, rebar.endPoint.x) + r,
+      maxY: Math.max(rebar.position.y, rebar.endPoint.y) + r,
+    };
+  }
+  // Cross-section: small circle
+  const margin = Math.max(r, 50); // Minimum visual size for selection
+  return {
+    minX: rebar.position.x - margin,
+    minY: rebar.position.y - margin,
+    maxX: rebar.position.x + margin,
+    maxY: rebar.position.y + margin,
+  };
+}
+
 const SHAPE_TYPES = [
-  'beam', 'gridline', 'level', 'pile', 'cpt', 'foundation-zone',
-  'wall', 'slab', 'puntniveau', 'space', 'plate-system',
-  'section-callout', 'spot-elevation',
+  'beam', 'gridline', 'level', 'pile', 'column', 'cpt', 'foundation-zone',
+  'wall', 'wall-opening', 'slab', 'slab-opening', 'slab-label', 'puntniveau', 'space', 'plate-system',
+  'section-callout', 'spot-elevation', 'rebar',
 ] as const;
 
 const handlers: Record<string, (shape: any, drawingScale?: number) => ShapeBounds | null> = {
@@ -254,15 +367,20 @@ const handlers: Record<string, (shape: any, drawingScale?: number) => ShapeBound
   'gridline': getGridlineBounds,
   'level': getLevelBounds,
   'pile': getPileBounds,
+  'column': getColumnBounds,
   'cpt': getCptBounds,
   'foundation-zone': getFoundationZoneBounds,
   'wall': getWallBounds,
+  'wall-opening': getWallOpeningBounds,
   'slab': getSlabBounds,
+  'slab-opening': getSlabOpeningBounds,
+  'slab-label': getSlabLabelBounds,
   'puntniveau': getPuntniveauBounds,
   'space': getSpaceBounds,
   'plate-system': getPlateSystemBounds,
   'section-callout': getSectionCalloutBounds,
   'spot-elevation': getSpotElevationBounds,
+  'rebar': getRebarBounds,
 };
 
 export function registerBounds(): void {

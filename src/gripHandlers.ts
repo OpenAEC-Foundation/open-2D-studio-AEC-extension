@@ -1,4 +1,4 @@
-import type { Point, BeamShape, GridlineShape, LevelShape, PileShape, WallShape, SectionCalloutShape, PlateSystemShape, PuntniveauShape, GripHandler } from 'open-2d-studio';
+import type { Point, BeamShape, GridlineShape, LevelShape, PileShape, ColumnShape, WallShape, WallOpeningShape, SectionCalloutShape, PlateSystemShape, PuntniveauShape, RebarShape, GripHandler } from 'open-2d-studio';
 import { bulgeArcMidpoint, calculateBulgeFrom3Points, formatPeilLabel, calculatePeilFromY, formatSectionPeilLabel, useAppStore, gripProviderRegistry } from 'open-2d-studio';
 
 const beamGripHandler: GripHandler = {
@@ -220,6 +220,26 @@ const pileGripHandler: GripHandler = {
   },
 };
 
+const columnGripHandler: GripHandler = {
+  getGripPoints(shape: any): Point[] {
+    return [shape.position];
+  },
+  getReferencePoint(shape: any): Point {
+    return (shape as ColumnShape).position;
+  },
+  computeBodyMove(shape: any, newPos: Point) {
+    const col = shape as ColumnShape;
+    const ref = col.position;
+    const dx = newPos.x - ref.x;
+    const dy = newPos.y - ref.y;
+    return { position: { x: col.position.x + dx, y: col.position.y + dy } };
+  },
+  computeGripUpdate(_shape: any, gripIndex: number, newPos: Point) {
+    if (gripIndex === 0) return { position: newPos };
+    return null;
+  },
+};
+
 const cptGripHandler: GripHandler = {
   getGripPoints(shape: any): Point[] {
     return [shape.position];
@@ -399,7 +419,14 @@ const slabGripHandler: GripHandler = {
     const ref = shape.points[0] || { x: 0, y: 0 };
     const dx = newPos.x - ref.x;
     const dy = newPos.y - ref.y;
-    return { points: shape.points.map((p: any) => ({ x: p.x + dx, y: p.y + dy })) };
+    const result: any = { points: shape.points.map((p: any) => ({ x: p.x + dx, y: p.y + dy })) };
+    // Also move inner contours (holes) if present
+    if (shape.innerContours) {
+      result.innerContours = shape.innerContours.map((contour: Point[]) =>
+        contour.map((p: any) => ({ x: p.x + dx, y: p.y + dy }))
+      );
+    }
+    return result;
   },
   computeGripUpdate(shape: any, gripIndex: number, newPos: Point) {
     const slabVertexCount = shape.points.length;
@@ -446,6 +473,75 @@ const slabGripHandler: GripHandler = {
       return p;
     });
     return { points: newSlabPoints };
+  },
+};
+
+const slabOpeningGripHandler: GripHandler = {
+  getGripPoints(shape: any): Point[] {
+    const soPts: Point[] = [...shape.points];
+    for (let si = 0; si < shape.points.length; si++) {
+      const sj = (si + 1) % shape.points.length;
+      soPts.push({
+        x: (shape.points[si].x + shape.points[sj].x) / 2,
+        y: (shape.points[si].y + shape.points[sj].y) / 2,
+      });
+    }
+    return soPts;
+  },
+  getReferencePoint(shape: any): Point {
+    return shape.points[0] || { x: 0, y: 0 };
+  },
+  computeBodyMove(shape: any, newPos: Point) {
+    const ref = shape.points[0] || { x: 0, y: 0 };
+    const dx = newPos.x - ref.x;
+    const dy = newPos.y - ref.y;
+    return { points: shape.points.map((p: any) => ({ x: p.x + dx, y: p.y + dy })) };
+  },
+  computeGripUpdate(shape: any, gripIndex: number, newPos: Point) {
+    const vertexCount = shape.points.length;
+    if (gripIndex < 0) return null;
+
+    if (gripIndex < vertexCount) {
+      const newPoints = shape.points.map((p: any, i: number) =>
+        i === gripIndex ? { x: newPos.x, y: newPos.y } : p
+      );
+      return { points: newPoints };
+    }
+
+    const edgeIdx = gripIndex - vertexCount;
+    if (edgeIdx < 0 || edgeIdx >= vertexCount) return null;
+
+    const vi = edgeIdx;
+    const vj = (edgeIdx + 1) % vertexCount;
+    const midX = (shape.points[vi].x + shape.points[vj].x) / 2;
+    const midY = (shape.points[vi].y + shape.points[vj].y) / 2;
+
+    const edgeDx = shape.points[vj].x - shape.points[vi].x;
+    const edgeDy = shape.points[vj].y - shape.points[vi].y;
+    const edgeLen = Math.sqrt(edgeDx * edgeDx + edgeDy * edgeDy);
+
+    if (edgeLen < 0.001) {
+      const tdx = newPos.x - midX;
+      const tdy = newPos.y - midY;
+      const newPts = shape.points.map((p: any, i: number) => {
+        if (i === vi || i === vj) return { x: p.x + tdx, y: p.y + tdy };
+        return p;
+      });
+      return { points: newPts };
+    }
+
+    const perpX = -edgeDy / edgeLen;
+    const perpY = edgeDx / edgeLen;
+    const dragVecX = newPos.x - midX;
+    const dragVecY = newPos.y - midY;
+    const perpProj = dragVecX * perpX + dragVecY * perpY;
+    const offsetX = perpProj * perpX;
+    const offsetY = perpProj * perpY;
+    const newPts = shape.points.map((p: any, i: number) => {
+      if (i === vi || i === vj) return { x: p.x + offsetX, y: p.y + offsetY };
+      return p;
+    });
+    return { points: newPts };
   },
 };
 
@@ -547,9 +643,129 @@ const plateSystemGripHandler: GripHandler = {
   },
 };
 
+const slabLabelGripHandler: GripHandler = {
+  getGripPoints(shape: any): Point[] {
+    return [shape.position];
+  },
+  getReferencePoint(shape: any): Point {
+    return shape.position;
+  },
+  computeBodyMove(shape: any, newPos: Point) {
+    const ref = shape.position;
+    const dx = newPos.x - ref.x;
+    const dy = newPos.y - ref.y;
+    return { position: { x: ref.x + dx, y: ref.y + dy } };
+  },
+  computeGripUpdate(_shape: any, _gripIndex: number, newPos: Point) {
+    return { position: { x: newPos.x, y: newPos.y } };
+  },
+};
+
+const wallOpeningGripHandler: GripHandler = {
+  getGripPoints(shape: any): Point[] {
+    const wo = shape as WallOpeningShape;
+    const allShapes = useAppStore.getState().shapes;
+    const hostWall = allShapes.find(s => s.id === wo.hostWallId) as WallShape | undefined;
+    if (!hostWall) return [];
+
+    const dx = hostWall.end.x - hostWall.start.x;
+    const dy = hostWall.end.y - hostWall.start.y;
+    const wallLen = Math.sqrt(dx * dx + dy * dy);
+    if (wallLen < 0.001) return [];
+
+    const dirX = dx / wallLen;
+    const dirY = dy / wallLen;
+
+    // Return the center point of the opening along the wall centerline
+    return [{
+      x: hostWall.start.x + dirX * wo.positionAlongWall,
+      y: hostWall.start.y + dirY * wo.positionAlongWall,
+    }];
+  },
+  getReferencePoint(shape: any): Point {
+    const wo = shape as WallOpeningShape;
+    const allShapes = useAppStore.getState().shapes;
+    const hostWall = allShapes.find(s => s.id === wo.hostWallId) as WallShape | undefined;
+    if (!hostWall) return { x: 0, y: 0 };
+
+    const dx = hostWall.end.x - hostWall.start.x;
+    const dy = hostWall.end.y - hostWall.start.y;
+    const wallLen = Math.sqrt(dx * dx + dy * dy);
+    if (wallLen < 0.001) return hostWall.start;
+
+    const dirX = dx / wallLen;
+    const dirY = dy / wallLen;
+    return {
+      x: hostWall.start.x + dirX * wo.positionAlongWall,
+      y: hostWall.start.y + dirY * wo.positionAlongWall,
+    };
+  },
+  computeBodyMove(shape: any, newPos: Point) {
+    const wo = shape as WallOpeningShape;
+    const allShapes = useAppStore.getState().shapes;
+    const hostWall = allShapes.find(s => s.id === wo.hostWallId) as WallShape | undefined;
+    if (!hostWall) return null;
+
+    const dx = hostWall.end.x - hostWall.start.x;
+    const dy = hostWall.end.y - hostWall.start.y;
+    const wallLen = Math.sqrt(dx * dx + dy * dy);
+    if (wallLen < 0.001) return null;
+
+    const dirX = dx / wallLen;
+    const dirY = dy / wallLen;
+
+    // Project the new position onto the wall centerline
+    const relX = newPos.x - hostWall.start.x;
+    const relY = newPos.y - hostWall.start.y;
+    let newPosition = relX * dirX + relY * dirY;
+
+    // Clamp to wall length
+    const halfW = wo.width / 2;
+    newPosition = Math.max(halfW, Math.min(wallLen - halfW, newPosition));
+
+    return { positionAlongWall: newPosition };
+  },
+  computeGripUpdate(shape: any, gripIndex: number, newPos: Point) {
+    if (gripIndex !== 0) return null;
+    return this.computeBodyMove(shape, newPos);
+  },
+};
+
+const rebarGripHandler: GripHandler = {
+  getGripPoints(shape: any): Point[] {
+    const rebar = shape as RebarShape;
+    const points = [rebar.position];
+    if (rebar.viewMode === 'longitudinal' && rebar.endPoint) {
+      points.push(rebar.endPoint);
+    }
+    return points;
+  },
+  getReferencePoint(shape: any): Point {
+    return (shape as RebarShape).position;
+  },
+  computeBodyMove(shape: any, newPos: Point) {
+    const rebar = shape as RebarShape;
+    const ref = rebar.position;
+    const dx = newPos.x - ref.x;
+    const dy = newPos.y - ref.y;
+    const updates: Record<string, any> = {
+      position: { x: rebar.position.x + dx, y: rebar.position.y + dy },
+    };
+    if (rebar.endPoint) {
+      updates.endPoint = { x: rebar.endPoint.x + dx, y: rebar.endPoint.y + dy };
+    }
+    return updates;
+  },
+  computeGripUpdate(shape: any, gripIndex: number, newPos: Point) {
+    if (gripIndex === 0) return { position: newPos };
+    if (gripIndex === 1) return { endPoint: newPos };
+    return null;
+  },
+};
+
 const GRIP_TYPES = [
-  'beam', 'gridline', 'level', 'pile', 'cpt', 'foundation-zone',
-  'wall', 'section-callout', 'slab', 'puntniveau', 'plate-system',
+  'beam', 'gridline', 'level', 'pile', 'column', 'cpt', 'foundation-zone',
+  'wall', 'wall-opening', 'section-callout', 'slab', 'slab-opening', 'slab-label', 'puntniveau', 'plate-system', 'rebar',
 ] as const;
 
 const gripHandlers: Record<string, GripHandler> = {
@@ -557,13 +773,18 @@ const gripHandlers: Record<string, GripHandler> = {
   'gridline': gridlineGripHandler,
   'level': levelGripHandler,
   'pile': pileGripHandler,
+  'column': columnGripHandler,
   'cpt': cptGripHandler,
   'foundation-zone': foundationZoneGripHandler,
   'wall': wallGripHandler,
+  'wall-opening': wallOpeningGripHandler,
   'section-callout': sectionCalloutGripHandler,
   'slab': slabGripHandler,
+  'slab-opening': slabOpeningGripHandler,
+  'slab-label': slabLabelGripHandler,
   'puntniveau': puntniveauGripHandler,
   'plate-system': plateSystemGripHandler,
+  'rebar': rebarGripHandler,
 };
 
 export function registerGripHandlers(): void {

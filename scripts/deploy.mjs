@@ -15,7 +15,7 @@ if (!appData) {
   process.exit(1);
 }
 
-const targetDir = join(appData, 'com.openndstudio.app', 'extensions', 'aec');
+const targetDir = join(appData, 'com.open2dstudio.app', 'extensions', 'aec');
 
 if (!existsSync(targetDir)) {
   mkdirSync(targetDir, { recursive: true });

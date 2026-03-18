@@ -1,7 +1,7 @@
 import { keyboardShortcutRegistry, useAppStore } from 'open-2d-studio';
 
 const SHORTCUT_KEYS = [
-  'se', 'be', 'gl', 'lv', 'pi', 'pn', 'ct', 'wa', 'sl', 'rm', 'ps', 'sv', 'tw',
+  'se', 'be', 'gl', 'lv', 'pi', 'co', 'pn', 'ct', 'wa', 'wo', 'sl', 'sb', 'rm', 'ps', 'sv', 'tw',
 ] as const;
 
 export function registerKeyboardShortcuts(): void {
@@ -59,6 +59,22 @@ export function registerKeyboardShortcuts(): void {
   });
 
   keyboardShortcutRegistry.register({
+    keys: 'co',
+    activate: () => {
+      const s = useAppStore.getState();
+      if (s.editorMode === 'drawing') {
+        s.setPendingColumn({
+          width: 300,
+          depth: 300,
+          rotation: 0,
+          material: 'concrete',
+        });
+        s.setActiveTool('column');
+      }
+    },
+  });
+
+  keyboardShortcutRegistry.register({
     keys: 'pn',
     activate: () => {
       const s = useAppStore.getState();
@@ -108,18 +124,45 @@ export function registerKeyboardShortcuts(): void {
   });
 
   keyboardShortcutRegistry.register({
+    keys: 'wo',
+    activate: () => {
+      const s = useAppStore.getState();
+      if (s.editorMode === 'drawing') {
+        s.setActiveTool('wall-opening');
+      }
+    },
+  });
+
+  keyboardShortcutRegistry.register({
     keys: 'sl',
     activate: () => {
       const s = useAppStore.getState();
       if (s.editorMode === 'drawing') {
         s.setPendingSlab({
           thickness: 200,
-          level: '0',
           elevation: 0,
           material: 'concrete',
+          level: undefined,
           shapeMode: 'line',
         });
         s.setActiveTool('slab');
+      }
+    },
+  });
+
+  keyboardShortcutRegistry.register({
+    keys: 'sb',
+    activate: () => {
+      const s = useAppStore.getState();
+      if (s.editorMode === 'drawing') {
+        s.setPendingSlabLabel({
+          floorType: 'kanaalplaatvloer',
+          thickness: 200,
+          spanDirection: 0,
+          fontSize: 150,
+          arrowLength: 1000,
+        });
+        s.setActiveTool('slab-label');
       }
     },
   });
