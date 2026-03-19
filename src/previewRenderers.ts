@@ -8,8 +8,37 @@
  */
 
 import type { ShapeRenderContext } from 'open-2d-studio';
-import { shapePreviewRegistry, bulgeToArc, CAD_DEFAULT_FONT, DEFAULT_MATERIAL_HATCH_SETTINGS, LINE_DASH_REFERENCE_SCALE, COLORS, formatElevation } from 'open-2d-studio';
+import { shapePreviewRegistry, bulgeToArc, CAD_DEFAULT_FONT, DEFAULT_MATERIAL_HATCH_SETTINGS, LINE_DASH_REFERENCE_SCALE, COLORS, formatElevation, useAppStore } from 'open-2d-studio';
 import { drawPilePreviewSymbol } from './renderers';
+
+// ---------------------------------------------------------------------------
+// Helper: resolve gridline extension per drawing scale
+// ---------------------------------------------------------------------------
+
+function resolveGridlineExtensionFromTable(
+  perScale: Record<string, number> | undefined,
+  drawingScale: number | undefined,
+): number {
+  if (!perScale || Object.keys(perScale).length === 0) return 2.5;
+  if (!drawingScale || drawingScale <= 0) return 2.5;
+
+  const scaleKey = String(drawingScale);
+  if (scaleKey in perScale) return perScale[scaleKey];
+
+  const scaleKeys = Object.keys(perScale).map(Number).filter(n => !isNaN(n));
+  if (scaleKeys.length === 0) return 2.5;
+
+  let nearest = scaleKeys[0];
+  let nearestDist = Math.abs(Math.log(drawingScale) - Math.log(nearest));
+  for (let i = 1; i < scaleKeys.length; i++) {
+    const dist = Math.abs(Math.log(drawingScale) - Math.log(scaleKeys[i]));
+    if (dist < nearestDist) {
+      nearest = scaleKeys[i];
+      nearestDist = dist;
+    }
+  }
+  return perScale[String(nearest)];
+}
 
 // ---------------------------------------------------------------------------
 // Helper: compute strokeColor from style + invertColors
@@ -118,9 +147,10 @@ function drawGridlinePreview(
   const glDx = Math.cos(glAngle);
   const glDy = Math.sin(glAngle);
 
-  // gridlineExtension is in paper-mm; multiply by LINE_DASH_REFERENCE_SCALE for
-  // scale-independent paper size (constant mm on paper regardless of drawing scale)
-  const glExt = renderCtx.gridlineExtension * LINE_DASH_REFERENCE_SCALE;
+  // Look up gridlineExtension from the per-scale table based on the current drawing scale
+  const glExtPerScale = (useAppStore.getState() as any).gridlineExtensionPerScale;
+  const glResolvedExt = resolveGridlineExtensionFromTable(glExtPerScale, renderCtx.drawingScale);
+  const glExt = glResolvedExt * LINE_DASH_REFERENCE_SCALE;
   const glScaledLineWidth = ctx.lineWidth * glScaleFactor;
 
   // Draw dash-dot line with scale-aware pattern (matching actual gridline)
@@ -1226,110 +1256,61 @@ function drawSlabLabelPreview(
   _style: any,
   invertColors: boolean,
 ): void {
-  const { position, floorType, customTypeName, thickness, spanDirection, fontSize, arrowLength } = preview;
+  const { position, thickness, fontSize } = preview;
   if (!position) return;
 
-  let textColor = _style?.strokeColor || '#ffffff';
-  if (invertColors && textColor === '#ffffff') textColor = '#000000';
+  let strokeColor = _style?.strokeColor || '#ffffff';
+  if (invertColors && strokeColor === '#ffffff') strokeColor = '#000000';
 
-  // Resolve display name
-  const FLOOR_TYPES: Record<string, string> = {
-    'kanaalplaatvloer': 'Kanaalplaatvloer',
-    'breedplaatvloer': 'Breedplaatvloer',
-    'ribcassettevloer': 'Ribcassettevloer',
-    'staalplaatbetonvloer': 'Staalplaatbetonvloer',
-    'massieve-vloer': 'Massieve vloer',
-    'houten-vloer': 'Houten vloer',
-    'predallen': 'Predallen',
-    'custom': 'Overig',
-  };
-  const typeName = floorType === 'custom'
-    ? (customTypeName || 'Custom')
-    : (FLOOR_TYPES[floorType] || floorType);
-
-  const spanAngleRad = ((spanDirection ?? 0) * Math.PI) / 180;
   const fs = fontSize || 150;
-  const aLen = arrowLength || 1000;
+  const radius = fs * 0.8;
+  const circleGap = radius * 0.15;
+
+  const thicknessText = String(Math.round(thickness || 200));
+  const peilText = '?'; // Preview has no linked slab yet
+
+  let bgColor = '#1a1a2e';
+  if (invertColors) bgColor = '#ffffff';
 
   ctx.save();
   ctx.translate(position.x, position.y);
   ctx.globalAlpha = 0.6;
 
-  // --- Span direction arrows ---
-  const halfLen = aLen / 2;
-  const arrowHeadLen = Math.min(halfLen * 0.2, fs * 1.0);
-  const arrowHeadWidth = arrowHeadLen * 0.5;
-  const arrowSpacing = fs * 1.5;
+  const leftCx = -(radius + circleGap / 2);
+  const rightCx = radius + circleGap / 2;
+  const lineWidth = renderCtx.getLineWidth ? renderCtx.getLineWidth(1) : 1;
 
-  ctx.strokeStyle = textColor;
-  ctx.fillStyle = textColor;
-  ctx.lineWidth = renderCtx.getLineWidth ? renderCtx.getLineWidth(1) : 1;
-  ctx.setLineDash([]);
-
-  const dx = Math.cos(spanAngleRad);
-  const dy = Math.sin(spanAngleRad);
-  const perpX = -dy;
-  const perpY = dx;
-
-  for (const offset of [-arrowSpacing, arrowSpacing]) {
-    const ocx = perpX * offset;
-    const ocy = perpY * offset;
-    const startX = ocx - dx * halfLen;
-    const startY = ocy - dy * halfLen;
-    const endX = ocx + dx * halfLen;
-    const endY = ocy + dy * halfLen;
-
-    ctx.beginPath();
-    ctx.moveTo(startX + dx * arrowHeadLen, startY + dy * arrowHeadLen);
-    ctx.lineTo(endX - dx * arrowHeadLen, endY - dy * arrowHeadLen);
-    ctx.stroke();
-
-    // Start arrowhead
-    ctx.beginPath();
-    ctx.moveTo(startX, startY);
-    ctx.lineTo(startX + dx * arrowHeadLen + perpX * arrowHeadWidth, startY + dy * arrowHeadLen + perpY * arrowHeadWidth);
-    ctx.lineTo(startX + dx * arrowHeadLen - perpX * arrowHeadWidth, startY + dy * arrowHeadLen - perpY * arrowHeadWidth);
-    ctx.closePath();
-    ctx.fill();
-
-    // End arrowhead
-    ctx.beginPath();
-    ctx.moveTo(endX, endY);
-    ctx.lineTo(endX - dx * arrowHeadLen + perpX * arrowHeadWidth, endY - dy * arrowHeadLen + perpY * arrowHeadWidth);
-    ctx.lineTo(endX - dx * arrowHeadLen - perpX * arrowHeadWidth, endY - dy * arrowHeadLen - perpY * arrowHeadWidth);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  // --- Label text ---
-  const fontStyle = `${fs}px ${CAD_DEFAULT_FONT}`;
-  ctx.font = fontStyle;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  const line1 = typeName;
-  const line2 = `${thickness} mm`;
-  const lineSpacing = fs * 1.3;
-
-  const bgPadding = fs * 0.3;
-  const maxTextWidth = Math.max(ctx.measureText(line1).width, ctx.measureText(line2).width);
-  const bgWidth = maxTextWidth + bgPadding * 2;
-  const bgHeight = lineSpacing * 2 + bgPadding * 2;
-
-  let bgColor = '#1a1a2e';
-  if (invertColors) bgColor = '#ffffff';
+  // Left circle (thickness)
+  ctx.beginPath();
+  ctx.arc(leftCx, 0, radius, 0, Math.PI * 2);
   ctx.fillStyle = bgColor;
   ctx.globalAlpha = 0.4;
-  ctx.fillRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight);
-
+  ctx.fill();
   ctx.globalAlpha = 0.6;
-  ctx.strokeStyle = textColor;
-  ctx.lineWidth = 1;
-  ctx.strokeRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight);
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = lineWidth;
+  ctx.setLineDash([]);
+  ctx.stroke();
 
-  ctx.fillStyle = textColor;
-  ctx.fillText(line1, 0, -lineSpacing * 0.5);
-  ctx.fillText(line2, 0, lineSpacing * 0.5);
+  // Right circle (peil)
+  ctx.beginPath();
+  ctx.arc(rightCx, 0, radius, 0, Math.PI * 2);
+  ctx.fillStyle = bgColor;
+  ctx.globalAlpha = 0.4;
+  ctx.fill();
+  ctx.globalAlpha = 0.6;
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = lineWidth;
+  ctx.stroke();
+
+  // Text
+  const textSize = fs * 0.7;
+  ctx.font = `${textSize}px ${CAD_DEFAULT_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = strokeColor;
+  ctx.fillText(thicknessText, leftCx, 0);
+  ctx.fillText(peilText, rightCx, 0);
 
   ctx.restore();
 }

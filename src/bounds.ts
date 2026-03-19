@@ -6,6 +6,36 @@ import type {
 } from 'open-2d-studio';
 import { annotationScaleFactor, bulgeArcBounds, boundsRegistry, useAppStore } from 'open-2d-studio';
 
+/**
+ * Resolve the gridline extension for a given drawing scale from the per-scale table.
+ * Falls back to the nearest scale if no exact match is found.
+ */
+function resolveGridlineExtensionFromTable(
+  perScale: Record<string, number> | undefined,
+  drawingScale: number | undefined,
+): number {
+  if (!perScale || Object.keys(perScale).length === 0) return 2.5;
+  if (!drawingScale || drawingScale <= 0) return 2.5;
+
+  const scaleKey = String(drawingScale);
+  if (scaleKey in perScale) return perScale[scaleKey];
+
+  // Find the nearest scale (using log-distance for ratio-based proximity)
+  const scaleKeys = Object.keys(perScale).map(Number).filter(n => !isNaN(n));
+  if (scaleKeys.length === 0) return 2.5;
+
+  let nearest = scaleKeys[0];
+  let nearestDist = Math.abs(Math.log(drawingScale) - Math.log(nearest));
+  for (let i = 1; i < scaleKeys.length; i++) {
+    const dist = Math.abs(Math.log(drawingScale) - Math.log(scaleKeys[i]));
+    if (dist < nearestDist) {
+      nearest = scaleKeys[i];
+      nearestDist = dist;
+    }
+  }
+  return perScale[String(nearest)];
+}
+
 function getBeamBounds(shape: any, _drawingScale?: number): ShapeBounds | null {
   const { start, end, flangeWidth } = shape as BeamShape;
   const halfWidth = flangeWidth / 2;
@@ -49,9 +79,9 @@ function getGridlineBounds(shape: any, drawingScale?: number): ShapeBounds | nul
   const glShape = shape as GridlineShape;
   const glSf = annotationScaleFactor(drawingScale);
   const r = (glShape.bubbleRadius || 0) * glSf;
-  // gridlineExtension is in paper-mm; multiply by ANNOTATION_REFERENCE_SCALE (0.01)
-  // for scale-independent paper size
-  const storeExt = useAppStore.getState().gridlineExtension;
+  // Look up gridlineExtension from the per-scale table based on the current drawing scale
+  const state = useAppStore.getState();
+  const storeExt = resolveGridlineExtensionFromTable((state as any).gridlineExtensionPerScale, drawingScale);
   const glExt = storeExt * 0.01;
   return {
     minX: Math.min(glShape.start.x, glShape.end.x) - r - glExt,
@@ -208,13 +238,15 @@ function getSlabOpeningBounds(shape: any): ShapeBounds | null {
 
 function getSlabLabelBounds(shape: any): ShapeBounds | null {
   const sl = shape as SlabLabelShape;
-  const halfArrow = sl.arrowLength / 2;
-  const margin = sl.fontSize * 2;
+  // Two circles side by side, each with radius = fontSize * 0.8
+  const radius = sl.fontSize * 0.8;
+  const circleGap = radius * 0.15;
+  const totalHalfWidth = radius * 2 + circleGap / 2 + radius * 0.1;
   return {
-    minX: sl.position.x - halfArrow - margin,
-    minY: sl.position.y - halfArrow - margin,
-    maxX: sl.position.x + halfArrow + margin,
-    maxY: sl.position.y + halfArrow + margin,
+    minX: sl.position.x - totalHalfWidth,
+    minY: sl.position.y - radius - radius * 0.1,
+    maxX: sl.position.x + totalHalfWidth,
+    maxY: sl.position.y + radius + radius * 0.1,
   };
 }
 

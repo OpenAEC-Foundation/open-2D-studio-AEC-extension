@@ -36,11 +36,39 @@ import {
   CAD_DEFAULT_FONT,
   DEFAULT_MATERIAL_HATCH_SETTINGS,
   LINE_DASH_REFERENCE_SCALE,
-  STRUCTURAL_FLOOR_TYPES,
   formatNumber,
   formatElevation,
   useAppStore,
 } from 'open-2d-studio';
+
+// ---------------------------------------------------------------------------
+// Helper: resolve gridline extension per drawing scale
+// ---------------------------------------------------------------------------
+
+function resolveGridlineExtensionFromTable(
+  perScale: Record<string, number> | undefined,
+  drawingScale: number | undefined,
+): number {
+  if (!perScale || Object.keys(perScale).length === 0) return 2.5;
+  if (!drawingScale || drawingScale <= 0) return 2.5;
+
+  const scaleKey = String(drawingScale);
+  if (scaleKey in perScale) return perScale[scaleKey];
+
+  const scaleKeys = Object.keys(perScale).map(Number).filter(n => !isNaN(n));
+  if (scaleKeys.length === 0) return 2.5;
+
+  let nearest = scaleKeys[0];
+  let nearestDist = Math.abs(Math.log(drawingScale) - Math.log(nearest));
+  for (let i = 1; i < scaleKeys.length; i++) {
+    const dist = Math.abs(Math.log(drawingScale) - Math.log(scaleKeys[i]));
+    if (dist < nearestDist) {
+      nearest = scaleKeys[i];
+      nearestDist = dist;
+    }
+  }
+  return perScale[String(nearest)];
+}
 
 // ---------------------------------------------------------------------------
 // Helper: line-line intersection (pure geometry, no render context)
@@ -597,9 +625,10 @@ function drawGridline(renderCtx: ShapeRenderContext, shape: GridlineShape, inver
   const origLineWidth = ctx.lineWidth;
   const scaledLineWidth = origLineWidth * scaleFactor;
 
-  // gridlineExtension is in paper-mm; multiply by LINE_DASH_REFERENCE_SCALE for
-  // scale-independent paper size (constant mm on paper regardless of drawing scale)
-  const ext = renderCtx.gridlineExtension * LINE_DASH_REFERENCE_SCALE;
+  // Look up gridlineExtension from the per-scale table based on the current drawing scale
+  const glExtPerScale = (useAppStore.getState() as any).gridlineExtensionPerScale;
+  const resolvedExt = resolveGridlineExtensionFromTable(glExtPerScale, renderCtx.drawingScale);
+  const ext = resolvedExt * LINE_DASH_REFERENCE_SCALE;
   ctx.save();
   ctx.lineWidth = scaledLineWidth;
   ctx.setLineDash(renderCtx.getLineDash('dashdot'));
@@ -1963,10 +1992,11 @@ function drawWall(renderCtx: ShapeRenderContext, shape: WallShape, invertColors:
     ctx.closePath();
     // Cut out opening rectangles from the clip region
     if (openingGaps.length > 0 && wallLen > 0.001) {
-      const hDirX = (end.x - start.x) / wallLen;
-      const hDirY = (end.y - start.y) / wallLen;
-      const hPerpX = -hDirY;
-      const hPerpY = hDirX;
+      const hWallAngle = Math.atan2(end.y - start.y, end.x - start.x);
+      const hDirX = Math.cos(hWallAngle);
+      const hDirY = Math.sin(hWallAngle);
+      const hPerpX = Math.sin(hWallAngle);
+      const hPerpY = Math.cos(hWallAngle);
       let hLeftThick: number, hRightThick: number;
       if (shape.justification === 'left') { hLeftThick = 0; hRightThick = shape.thickness; }
       else if (shape.justification === 'right') { hLeftThick = shape.thickness; hRightThick = 0; }
@@ -1974,10 +2004,11 @@ function drawWall(renderCtx: ShapeRenderContext, shape: WallShape, invertColors:
       for (const gap of openingGaps) {
         const gStart = gap.t0 * wallLen;
         const gEnd = gap.t1 * wallLen;
-        const oc0 = { x: start.x + hDirX * gStart + hPerpX * hLeftThick, y: start.y + hDirY * gStart + hPerpY * hLeftThick };
-        const oc1 = { x: start.x + hDirX * gEnd + hPerpX * hLeftThick, y: start.y + hDirY * gEnd + hPerpY * hLeftThick };
-        const oc2 = { x: start.x + hDirX * gEnd - hPerpX * hRightThick, y: start.y + hDirY * gEnd - hPerpY * hRightThick };
-        const oc3 = { x: start.x + hDirX * gStart - hPerpX * hRightThick, y: start.y + hDirY * gStart - hPerpY * hRightThick };
+        // Same corner formula as computeWallCorners: left = +perpX, -perpY; right = -perpX, +perpY
+        const oc0 = { x: start.x + hDirX * gStart + hPerpX * hLeftThick, y: start.y + hDirY * gStart - hPerpY * hLeftThick };
+        const oc1 = { x: start.x + hDirX * gEnd + hPerpX * hLeftThick, y: start.y + hDirY * gEnd - hPerpY * hLeftThick };
+        const oc2 = { x: start.x + hDirX * gEnd - hPerpX * hRightThick, y: start.y + hDirY * gEnd + hPerpY * hRightThick };
+        const oc3 = { x: start.x + hDirX * gStart - hPerpX * hRightThick, y: start.y + hDirY * gStart + hPerpY * hRightThick };
         // Wind counter-clockwise (opposite to outer) for evenodd subtraction
         ctx.moveTo(oc0.x, oc0.y);
         ctx.lineTo(oc3.x, oc3.y);
@@ -2170,6 +2201,24 @@ function drawWallOpening(renderCtx: ShapeRenderContext, shape: any, invertColors
   ctx.moveTo(c1.x, c1.y);
   ctx.lineTo(c3.x, c3.y);
   ctx.stroke();
+
+  // Draw width x height label in center
+  const centerX = (c0.x + c2.x) / 2;
+  const centerY = (c0.y + c2.y) / 2;
+  const scaleFactor = LINE_DASH_REFERENCE_SCALE / renderCtx.drawingScale;
+  const labelFontSize = 1.5 * scaleFactor;
+  ctx.fillStyle = strokeColor;
+  ctx.font = `${labelFontSize}px ${CAD_DEFAULT_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const wallAngleForText = Math.atan2(dy, dx);
+  ctx.save();
+  ctx.translate(centerX, centerY);
+  let textRot = wallAngleForText;
+  if (textRot > Math.PI / 2 || textRot < -Math.PI / 2) textRot += Math.PI;
+  ctx.rotate(textRot);
+  ctx.fillText(`${wo.width}x${wo.height}`, 0, 0);
+  ctx.restore();
 
   ctx.restore();
 }
@@ -3035,103 +3084,97 @@ function drawSlabOpening(renderCtx: ShapeRenderContext, shape: SlabOpeningShape,
 
 function drawSlabLabel(renderCtx: ShapeRenderContext, shape: SlabLabelShape, invertColors: boolean): void {
   const ctx = renderCtx.ctx;
-  const { position, floorType, customTypeName, thickness, spanDirection, fontSize, arrowLength } = shape;
+  const { position, fontSize } = shape;
 
-  let textColor = shape.style.strokeColor;
-  if (invertColors && textColor === '#ffffff') {
-    textColor = '#000000';
+  // Circle radius derived from fontSize (which is in drawing units, scale-relative)
+  const radius = fontSize * 0.8;
+  const circleGap = radius * 0.15; // slight gap between circles (touching/slightly separated)
+
+  // Resolve thickness and peil from linked slab if available
+  let thicknessVal = shape.thickness;
+  let peilText = '?';
+  let hasLinkedSlab = false;
+
+  if (shape.linkedSlabId) {
+    // Look up linked slab from shapesLookup (renderCtx) or from store
+    const linkedSlab = renderCtx.shapesLookup?.get(shape.linkedSlabId) as SlabShape | undefined;
+    if (linkedSlab && linkedSlab.type === 'slab') {
+      hasLinkedSlab = true;
+      thicknessVal = linkedSlab.thickness;
+
+      // Resolve storey elevation for peil calculation
+      const store = useAppStore.getState();
+      const projectStructure = store.projectStructure;
+      let storeyElevation = 0;
+      if (linkedSlab.level && projectStructure) {
+        for (const building of projectStructure.buildings) {
+          const storey = building.storeys.find((s: { id: string; elevation: number }) => s.id === linkedSlab.level);
+          if (storey) {
+            storeyElevation = storey.elevation;
+            break;
+          }
+        }
+      }
+      // Top of slab = storey elevation + slab elevation offset
+      // Bottom of slab = top - thickness
+      const topOfSlab = storeyElevation + (linkedSlab.elevation || 0);
+      const bottomOfSlab = topOfSlab - linkedSlab.thickness;
+      peilText = (bottomOfSlab >= 0 ? '+' : '') + String(Math.round(bottomOfSlab));
+    }
   }
 
-  // Resolve display name
-  const ftInfo = STRUCTURAL_FLOOR_TYPES.find(ft => ft.value === floorType);
-  const typeName = floorType === 'custom'
-    ? (customTypeName || 'Custom')
-    : (ftInfo?.label || floorType);
+  if (!hasLinkedSlab) {
+    // No linked slab: show thickness from the label itself, peil unknown
+    peilText = '?';
+  }
 
-  const spanAngleRad = (spanDirection * Math.PI) / 180;
+  const thicknessText = String(Math.round(thicknessVal));
+
+  let strokeColor = shape.style.strokeColor;
+  if (invertColors && strokeColor === '#ffffff') {
+    strokeColor = '#000000';
+  }
+  let bgColor = '#1a1a2e';
+  if (invertColors) bgColor = '#ffffff';
+
+  const lineWidth = renderCtx.getLineWidth ? renderCtx.getLineWidth(shape.style.strokeWidth) : shape.style.strokeWidth;
 
   ctx.save();
   ctx.translate(position.x, position.y);
 
-  // --- Draw span direction arrows (two parallel double-headed arrows) ---
-  const halfLen = arrowLength / 2;
-  const arrowHeadLen = Math.min(halfLen * 0.2, fontSize * 1.0);
-  const arrowHeadWidth = arrowHeadLen * 0.5;
-  const arrowSpacing = fontSize * 1.5;
+  // Left circle center and right circle center
+  const leftCx = -(radius + circleGap / 2);
+  const rightCx = radius + circleGap / 2;
 
-  ctx.strokeStyle = textColor;
-  ctx.fillStyle = textColor;
-  ctx.lineWidth = renderCtx.getLineWidth ? renderCtx.getLineWidth(shape.style.strokeWidth) : shape.style.strokeWidth;
+  // --- Draw left circle (thickness) ---
+  ctx.beginPath();
+  ctx.arc(leftCx, 0, radius, 0, Math.PI * 2);
+  ctx.fillStyle = bgColor;
+  ctx.fill();
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = lineWidth;
   ctx.setLineDash([]);
+  ctx.stroke();
 
-  const dx = Math.cos(spanAngleRad);
-  const dy = Math.sin(spanAngleRad);
-  const perpX = -dy;
-  const perpY = dx;
+  // --- Draw right circle (peil) ---
+  ctx.beginPath();
+  ctx.arc(rightCx, 0, radius, 0, Math.PI * 2);
+  ctx.fillStyle = bgColor;
+  ctx.fill();
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = lineWidth;
+  ctx.stroke();
 
-  for (const offset of [-arrowSpacing, arrowSpacing]) {
-    const ocx = perpX * offset;
-    const ocy = perpY * offset;
-
-    const startX = ocx - dx * halfLen;
-    const startY = ocy - dy * halfLen;
-    const endX = ocx + dx * halfLen;
-    const endY = ocy + dy * halfLen;
-
-    // Arrow shaft
-    ctx.beginPath();
-    ctx.moveTo(startX + dx * arrowHeadLen, startY + dy * arrowHeadLen);
-    ctx.lineTo(endX - dx * arrowHeadLen, endY - dy * arrowHeadLen);
-    ctx.stroke();
-
-    // Start arrowhead
-    ctx.beginPath();
-    ctx.moveTo(startX, startY);
-    ctx.lineTo(startX + dx * arrowHeadLen + perpX * arrowHeadWidth, startY + dy * arrowHeadLen + perpY * arrowHeadWidth);
-    ctx.lineTo(startX + dx * arrowHeadLen - perpX * arrowHeadWidth, startY + dy * arrowHeadLen - perpY * arrowHeadWidth);
-    ctx.closePath();
-    ctx.fill();
-
-    // End arrowhead
-    ctx.beginPath();
-    ctx.moveTo(endX, endY);
-    ctx.lineTo(endX - dx * arrowHeadLen + perpX * arrowHeadWidth, endY - dy * arrowHeadLen + perpY * arrowHeadWidth);
-    ctx.lineTo(endX - dx * arrowHeadLen - perpX * arrowHeadWidth, endY - dy * arrowHeadLen - perpY * arrowHeadWidth);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  // --- Draw label text (type name + thickness) centered between arrows ---
-  const fontStyle = `${fontSize}px ${CAD_DEFAULT_FONT}`;
-  ctx.font = fontStyle;
+  // --- Text in left circle (thickness) ---
+  const textSize = fontSize * 0.7;
+  ctx.font = `${textSize}px ${CAD_DEFAULT_FONT}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = textColor;
+  ctx.fillStyle = strokeColor;
+  ctx.fillText(thicknessText, leftCx, 0);
 
-  const line1 = typeName;
-  const line2 = `${thickness} mm`;
-  const lineSpacing = fontSize * 1.3;
-
-  // Background mask behind text
-  const bgPadding = fontSize * 0.3;
-  const maxTextWidth = Math.max(ctx.measureText(line1).width, ctx.measureText(line2).width);
-  const bgWidth = maxTextWidth + bgPadding * 2;
-  const bgHeight = lineSpacing * 2 + bgPadding * 2;
-
-  let bgColor = '#1a1a2e';
-  if (invertColors) bgColor = '#ffffff';
-  ctx.fillStyle = bgColor;
-  ctx.fillRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight);
-
-  // Border around background
-  ctx.strokeStyle = textColor;
-  ctx.lineWidth = shape.style.strokeWidth * 0.5;
-  ctx.strokeRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight);
-
-  // Text lines
-  ctx.fillStyle = textColor;
-  ctx.fillText(line1, 0, -lineSpacing * 0.5);
-  ctx.fillText(line2, 0, lineSpacing * 0.5);
+  // --- Text in right circle (peil) ---
+  ctx.fillText(peilText, rightCx, 0);
 
   ctx.restore();
 }

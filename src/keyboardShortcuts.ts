@@ -156,11 +156,8 @@ export function registerKeyboardShortcuts(): void {
       const s = useAppStore.getState();
       if (s.editorMode === 'drawing') {
         s.setPendingSlabLabel({
-          floorType: 'kanaalplaatvloer',
           thickness: 200,
-          spanDirection: 0,
           fontSize: 150,
-          arrowLength: 1000,
         });
         s.setActiveTool('slab-label');
       }

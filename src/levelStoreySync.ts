@@ -172,6 +172,11 @@ function syncLevels(prevLevelIds: Set<string>): void {
 
     // --- Case 1: Level is already linked to a storey → sync property changes ---
     if (linkedStoreyId) {
+      // Skip auto-generated section-ref levels — they are managed by
+      // sectionReferenceService and should NOT update storey elevations.
+      // Only user-created levels (linked via groupId) should sync back.
+      if (lv.id.startsWith(SECTION_REF_LV_PREFIX)) continue;
+
       const existing = storeyMap.get(linkedStoreyId);
       if (!existing) continue;
 

@@ -403,11 +403,8 @@ function StructuralTabContent() {
           label="Slab Label"
           onClick={() => {
             setPendingSlabLabel({
-              floorType: 'kanaalplaatvloer',
               thickness: 200,
-              spanDirection: 0,
               fontSize: 150,
-              arrowLength: 1000,
             });
             switchToDrawingTool('slab-label');
           }}
@@ -769,9 +766,8 @@ export function registerRibbonTabs(): void {
   const s = useAppStore.getState();
   s.addExtensionRibbonTab({ extensionId: 'aec', id: 'structural', label: 'AEC', order: 30, render: () => <StructuralTabContent /> });
   s.addExtensionRibbonTab({ extensionId: 'aec', id: 'pile-plan', label: 'Pile Plan', order: 31, render: () => <PilePlanTabContent /> });
-  s.addExtensionRibbonTab({ extensionId: 'aec', id: 'ifcx', label: 'IFCX', order: 45, render: () => <IfcxTabContent /> });
 
-  // Also add an "Export IFCX" button to the built-in IFC tab
+  // Add IFCX buttons to the built-in IFC tab (no separate IFCX tab)
   s.addExtensionRibbonButton({
     extensionId: 'aec',
     tab: 'ifc',
@@ -779,7 +775,19 @@ export function registerRibbonTabs(): void {
     label: 'Export IFCX',
     size: 'large',
     onClick: () => exportIFCX(),
-    tooltip: 'Export current model as IFCX JSON file (.ifcx) — a JSON-based IFC format by the OpenAEC Foundation',
+    tooltip: 'Export current model as IFCX JSON file (.ifcx)',
+  });
+  s.addExtensionRibbonButton({
+    extensionId: 'aec',
+    tab: 'ifc',
+    group: 'IFCX',
+    label: 'Copy IFCX',
+    size: 'small',
+    onClick: () => {
+      const result = generateIFCX();
+      navigator.clipboard.writeText(result.content).catch(() => {});
+    },
+    tooltip: 'Copy IFCX JSON to clipboard',
   });
 }
 
@@ -787,6 +795,6 @@ export function unregisterRibbonTabs(): void {
   const s = useAppStore.getState();
   s.removeExtensionRibbonTab('aec', 'structural');
   s.removeExtensionRibbonTab('aec', 'pile-plan');
-  s.removeExtensionRibbonTab('aec', 'ifcx');
   s.removeExtensionRibbonButton('aec', 'Export IFCX');
+  s.removeExtensionRibbonButton('aec', 'Copy IFCX');
 }

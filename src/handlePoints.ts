@@ -57,19 +57,31 @@ export function registerHandlePoints(): void {
     if (wallLen < 0.001) return [];
     const dirX = dx / wallLen;
     const dirY = dy / wallLen;
+    // Offset to wall center (perpendicular) based on justification
+    const wallAngle = Math.atan2(dy, dx);
+    const perpX = Math.sin(wallAngle);
+    const perpY = Math.cos(wallAngle);
+    let centerOffsetX = 0, centerOffsetY = 0;
+    if (hostWall.justification === 'left') {
+      centerOffsetX = perpX * (hostWall.thickness / 2);
+      centerOffsetY = -perpY * (hostWall.thickness / 2);
+    } else if (hostWall.justification === 'right') {
+      centerOffsetX = -perpX * (hostWall.thickness / 2);
+      centerOffsetY = perpY * (hostWall.thickness / 2);
+    }
     const halfW = wo.width / 2;
     return [
       {
-        x: hostWall.start.x + dirX * (wo.positionAlongWall - halfW),
-        y: hostWall.start.y + dirY * (wo.positionAlongWall - halfW),
+        x: hostWall.start.x + dirX * (wo.positionAlongWall - halfW) + centerOffsetX,
+        y: hostWall.start.y + dirY * (wo.positionAlongWall - halfW) + centerOffsetY,
       },
       {
-        x: hostWall.start.x + dirX * (wo.positionAlongWall + halfW),
-        y: hostWall.start.y + dirY * (wo.positionAlongWall + halfW),
+        x: hostWall.start.x + dirX * (wo.positionAlongWall + halfW) + centerOffsetX,
+        y: hostWall.start.y + dirY * (wo.positionAlongWall + halfW) + centerOffsetY,
       },
       {
-        x: hostWall.start.x + dirX * wo.positionAlongWall,
-        y: hostWall.start.y + dirY * wo.positionAlongWall,
+        x: hostWall.start.x + dirX * wo.positionAlongWall + centerOffsetX,
+        y: hostWall.start.y + dirY * wo.positionAlongWall + centerOffsetY,
       },
     ];
   });
