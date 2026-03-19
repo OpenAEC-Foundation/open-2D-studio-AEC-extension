@@ -150,7 +150,8 @@ function drawGridlinePreview(
   // Look up gridlineExtension from the per-scale table based on the current drawing scale
   const glExtPerScale = (useAppStore.getState() as any).gridlineExtensionPerScale;
   const glResolvedExt = resolveGridlineExtensionFromTable(glExtPerScale, renderCtx.drawingScale);
-  const glExt = glResolvedExt * LINE_DASH_REFERENCE_SCALE;
+  // Per-scale values are already in model mm — use directly, no scaling needed
+  const glExt = glResolvedExt;
   const glScaledLineWidth = ctx.lineWidth * glScaleFactor;
 
   // Draw dash-dot line with scale-aware pattern (matching actual gridline)

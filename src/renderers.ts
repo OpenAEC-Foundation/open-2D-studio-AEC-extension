@@ -628,7 +628,8 @@ function drawGridline(renderCtx: ShapeRenderContext, shape: GridlineShape, inver
   // Look up gridlineExtension from the per-scale table based on the current drawing scale
   const glExtPerScale = (useAppStore.getState() as any).gridlineExtensionPerScale;
   const resolvedExt = resolveGridlineExtensionFromTable(glExtPerScale, renderCtx.drawingScale);
-  const ext = resolvedExt * LINE_DASH_REFERENCE_SCALE;
+  // Per-scale values are already in model mm — use directly, no scaling needed
+  const ext = resolvedExt;
   ctx.save();
   ctx.lineWidth = scaledLineWidth;
   ctx.setLineDash(renderCtx.getLineDash('dashdot'));
@@ -3123,9 +3124,39 @@ function drawSlabLabel(renderCtx: ShapeRenderContext, shape: SlabLabelShape, inv
     }
   }
 
+  if (!hasLinkedSlab && shape.linkedSlabId) {
+    // Linked but slab not found in shapesLookup — try direct store lookup
+    const store = useAppStore.getState();
+    const slab = store.shapes.find((s: any) => s.id === shape.linkedSlabId && s.type === 'slab') as SlabShape | undefined;
+    if (slab) {
+      hasLinkedSlab = true;
+      thicknessVal = slab.thickness;
+      let storeyElev = 0;
+      if (slab.level && store.projectStructure) {
+        for (const building of store.projectStructure.buildings) {
+          const st = building.storeys.find((s: any) => s.id === slab.level);
+          if (st) { storeyElev = st.elevation; break; }
+        }
+      }
+      const bottom = storeyElev + (slab.elevation || 0) - slab.thickness;
+      peilText = (bottom >= 0 ? '+' : '') + String(Math.round(bottom));
+    }
+  }
+
   if (!hasLinkedSlab) {
-    // No linked slab: show thickness from the label itself, peil unknown
-    peilText = '?';
+    // No linked slab: show thickness from the label, use storey elevation from drawing
+    const store = useAppStore.getState();
+    const drawing = store.drawings?.find((d: any) => d.id === shape.drawingId);
+    if (drawing?.storeyId && store.projectStructure) {
+      for (const building of store.projectStructure.buildings) {
+        const st = building.storeys.find((s: any) => s.id === drawing.storeyId);
+        if (st) {
+          const bottom = st.elevation - thicknessVal;
+          peilText = (bottom >= 0 ? '+' : '') + String(Math.round(bottom));
+          break;
+        }
+      }
+    }
   }
 
   const thicknessText = String(Math.round(thicknessVal));

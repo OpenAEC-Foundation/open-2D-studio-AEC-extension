@@ -170,33 +170,15 @@ function syncLevels(prevLevelIds: Set<string>): void {
     const elevation = lv.elevation ?? lv.peil ?? Math.round(-lv.start.y);
     const linkedStoreyId = getLinkedStoreyId(lv);
 
-    // --- Case 1: Level is already linked to a storey → sync property changes ---
+    // --- Case 1: Level is linked to a storey ---
+    // Section-ref levels are already synced by the host app's updateShape action
+    // in modelSlice.ts (lines 1619-1636). No additional sync needed here.
     if (linkedStoreyId) {
-      // Skip auto-generated section-ref levels — they are managed by
-      // sectionReferenceService and should NOT update storey elevations.
-      // Only user-created levels (linked via groupId) should sync back.
-      if (lv.id.startsWith(SECTION_REF_LV_PREFIX)) continue;
-
-      const existing = storeyMap.get(linkedStoreyId);
-      if (!existing) continue;
-
-      const elevChanged = Math.abs(existing.elevation - elevation) >= 1;
-      const nameChanged = lv.description != null && lv.description !== '' && lv.description !== existing.name;
-
-      if (elevChanged || nameChanged) {
-        const updates: Record<string, any> = {};
-        if (elevChanged) updates.elevation = elevation;
-        if (nameChanged) updates.name = lv.description!;
-        updateStorey(existing.buildingId, linkedStoreyId, updates);
-      }
       continue;
     }
 
-    // --- Case 2: New unlinked level shape in a section drawing ---
-    // Only process shapes that were not present in the previous snapshot
-    if (prevLevelIds.has(lv.id)) continue;
-
-    // Skip if a storey already exists at this elevation
+    // --- Case 2: Unlinked level shape in a section drawing ---
+    // Create a storey if none exists at this elevation
     if (storeyExistsAtElevation(elevation)) continue;
 
     // Need at least one building to attach the storey to

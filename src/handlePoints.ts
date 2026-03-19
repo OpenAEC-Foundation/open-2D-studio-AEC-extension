@@ -57,31 +57,49 @@ export function registerHandlePoints(): void {
     if (wallLen < 0.001) return [];
     const dirX = dx / wallLen;
     const dirY = dy / wallLen;
-    // Offset to wall center (perpendicular) based on justification
+    // Use same perpendicular convention as computeWallCorners / renderer:
+    // perpX = sin(angle), perpY = cos(angle); left = +perpX/-perpY, right = -perpX/+perpY
     const wallAngle = Math.atan2(dy, dx);
     const perpX = Math.sin(wallAngle);
     const perpY = Math.cos(wallAngle);
-    let centerOffsetX = 0, centerOffsetY = 0;
+
+    // Compute left/right thickness based on justification (same as renderer)
+    let leftThick: number;
+    let rightThick: number;
     if (hostWall.justification === 'left') {
-      centerOffsetX = perpX * (hostWall.thickness / 2);
-      centerOffsetY = -perpY * (hostWall.thickness / 2);
+      leftThick = 0;
+      rightThick = hostWall.thickness;
     } else if (hostWall.justification === 'right') {
-      centerOffsetX = -perpX * (hostWall.thickness / 2);
-      centerOffsetY = perpY * (hostWall.thickness / 2);
+      leftThick = hostWall.thickness;
+      rightThick = 0;
+    } else {
+      leftThick = hostWall.thickness / 2;
+      rightThick = hostWall.thickness / 2;
     }
+
+    // Wall center offset = midpoint between left and right edges
+    // Left edge is at +perpX*leftThick, -perpY*leftThick
+    // Right edge is at -perpX*rightThick, +perpY*rightThick
+    // Midpoint offset = ((leftThick - rightThick) / 2) in the left direction
+    const centerFactor = (leftThick - rightThick) / 2;
+    const centerOffsetX = perpX * centerFactor;
+    const centerOffsetY = -perpY * centerFactor;
+
     const halfW = wo.width / 2;
+    const sx = hostWall.start.x;
+    const sy = hostWall.start.y;
     return [
       {
-        x: hostWall.start.x + dirX * (wo.positionAlongWall - halfW) + centerOffsetX,
-        y: hostWall.start.y + dirY * (wo.positionAlongWall - halfW) + centerOffsetY,
+        x: sx + dirX * (wo.positionAlongWall - halfW) + centerOffsetX,
+        y: sy + dirY * (wo.positionAlongWall - halfW) + centerOffsetY,
       },
       {
-        x: hostWall.start.x + dirX * (wo.positionAlongWall + halfW) + centerOffsetX,
-        y: hostWall.start.y + dirY * (wo.positionAlongWall + halfW) + centerOffsetY,
+        x: sx + dirX * (wo.positionAlongWall + halfW) + centerOffsetX,
+        y: sy + dirY * (wo.positionAlongWall + halfW) + centerOffsetY,
       },
       {
-        x: hostWall.start.x + dirX * wo.positionAlongWall + centerOffsetX,
-        y: hostWall.start.y + dirY * wo.positionAlongWall + centerOffsetY,
+        x: sx + dirX * wo.positionAlongWall + centerOffsetX,
+        y: sy + dirY * wo.positionAlongWall + centerOffsetY,
       },
     ];
   });

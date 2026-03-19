@@ -82,7 +82,8 @@ function getGridlineBounds(shape: any, drawingScale?: number): ShapeBounds | nul
   // Look up gridlineExtension from the per-scale table based on the current drawing scale
   const state = useAppStore.getState();
   const storeExt = resolveGridlineExtensionFromTable((state as any).gridlineExtensionPerScale, drawingScale);
-  const glExt = storeExt * 0.01;
+  // Per-scale values are already in model mm — use directly, no scaling needed
+  const glExt = storeExt;
   return {
     minX: Math.min(glShape.start.x, glShape.end.x) - r - glExt,
     minY: Math.min(glShape.start.y, glShape.end.y) - r - glExt,
@@ -340,8 +341,11 @@ function getWallOpeningBounds(shape: any): ShapeBounds | null {
 
   const dirX = dx / wallLen;
   const dirY = dy / wallLen;
-  const perpX = -dirY;
-  const perpY = dirX;
+  // Use same perpendicular convention as computeWallCorners / renderer:
+  // perpX = sin(angle), perpY = cos(angle); left = +perpX/-perpY, right = -perpX/+perpY
+  const wallAngle = Math.atan2(dy, dx);
+  const perpX = Math.sin(wallAngle);
+  const perpY = Math.cos(wallAngle);
 
   let leftThick: number;
   let rightThick: number;
@@ -353,11 +357,13 @@ function getWallOpeningBounds(shape: any): ShapeBounds | null {
   const startAlong = wo.positionAlongWall - halfW;
   const endAlong = wo.positionAlongWall + halfW;
 
+  const sx = hostWall.start.x;
+  const sy = hostWall.start.y;
   const corners = [
-    { x: hostWall.start.x + dirX * startAlong + perpX * leftThick, y: hostWall.start.y + dirY * startAlong + perpY * leftThick },
-    { x: hostWall.start.x + dirX * endAlong + perpX * leftThick, y: hostWall.start.y + dirY * endAlong + perpY * leftThick },
-    { x: hostWall.start.x + dirX * endAlong - perpX * rightThick, y: hostWall.start.y + dirY * endAlong - perpY * rightThick },
-    { x: hostWall.start.x + dirX * startAlong - perpX * rightThick, y: hostWall.start.y + dirY * startAlong - perpY * rightThick },
+    { x: sx + dirX * startAlong + perpX * leftThick, y: sy + dirY * startAlong - perpY * leftThick },
+    { x: sx + dirX * endAlong + perpX * leftThick, y: sy + dirY * endAlong - perpY * leftThick },
+    { x: sx + dirX * endAlong - perpX * rightThick, y: sy + dirY * endAlong + perpY * rightThick },
+    { x: sx + dirX * startAlong - perpX * rightThick, y: sy + dirY * startAlong + perpY * rightThick },
   ];
 
   const xs = corners.map(c => c.x);
