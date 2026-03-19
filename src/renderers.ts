@@ -2111,10 +2111,12 @@ function drawWallOpening(renderCtx: ShapeRenderContext, shape: any, invertColors
   // Wall direction and perpendicular
   const dirX = dx / wallLength;
   const dirY = dy / wallLength;
-  const perpX = -dirY;
-  const perpY = dirX;
+  // Use same perpendicular convention as computeWallCorners
+  const wallAngle = Math.atan2(dy, dx);
+  const perpX = Math.sin(wallAngle);
+  const perpY = Math.cos(wallAngle);
 
-  // Half-thickness offsets based on wall justification
+  // Half-thickness offsets based on wall justification (same as computeWallCorners)
   let leftThick: number;
   let rightThick: number;
   if (hostWall.justification === 'left') {
@@ -2133,11 +2135,14 @@ function drawWallOpening(renderCtx: ShapeRenderContext, shape: any, invertColors
   const startAlong = wo.positionAlongWall - halfW;
   const endAlong = wo.positionAlongWall + halfW;
 
-  // Four corners of the opening rectangle (in world coordinates)
-  const c0 = { x: hostWall.start.x + dirX * startAlong + perpX * leftThick, y: hostWall.start.y + dirY * startAlong + perpY * leftThick };
-  const c1 = { x: hostWall.start.x + dirX * endAlong + perpX * leftThick, y: hostWall.start.y + dirY * endAlong + perpY * leftThick };
-  const c2 = { x: hostWall.start.x + dirX * endAlong - perpX * rightThick, y: hostWall.start.y + dirY * endAlong - perpY * rightThick };
-  const c3 = { x: hostWall.start.x + dirX * startAlong - perpX * rightThick, y: hostWall.start.y + dirY * startAlong - perpY * rightThick };
+  // Four corners of the opening rectangle (exact same formula as computeWallCorners)
+  // Left side: +perpX*thick, -perpY*thick. Right side: -perpX*thick, +perpY*thick
+  const sx = hostWall.start.x;
+  const sy = hostWall.start.y;
+  const c0 = { x: sx + dirX * startAlong + perpX * leftThick, y: sy + dirY * startAlong - perpY * leftThick };
+  const c1 = { x: sx + dirX * endAlong + perpX * leftThick, y: sy + dirY * endAlong - perpY * leftThick };
+  const c2 = { x: sx + dirX * endAlong - perpX * rightThick, y: sy + dirY * endAlong + perpY * rightThick };
+  const c3 = { x: sx + dirX * startAlong - perpX * rightThick, y: sy + dirY * startAlong + perpY * rightThick };
 
   let strokeColor = shape.style?.strokeColor || '#ffffff';
   if (invertColors && strokeColor === '#ffffff') strokeColor = '#000000';

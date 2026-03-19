@@ -29,15 +29,28 @@ import { generateId, useAppStore } from 'open-2d-studio';
 /** Prefix used for auto-generated section reference level shape IDs. */
 const SECTION_REF_LV_PREFIX = 'section-ref-lv-';
 
-/** Extract the storey ID from a section-ref level shape ID.  Returns null for non-ref levels. */
-function storeyIdFromRefLevel(shapeId: string): string | null {
-  if (!shapeId.startsWith(SECTION_REF_LV_PREFIX)) return null;
-  return shapeId.slice(SECTION_REF_LV_PREFIX.length);
+/** groupId prefix used for storey-linked section reference levels. */
+const SECTION_REF_STOREY_GROUP_PREFIX = 'section-ref:storey-';
+
+/**
+ * Extract the storey ID linked to a level shape.
+ * Checks the shape ID prefix first (for auto-generated section-ref levels),
+ * then the groupId (for levels that were pasted/drawn and later linked).
+ */
+function getLinkedStoreyId(lv: LevelShape): string | null {
+  // Auto-generated levels: id = "section-ref-lv-{storeyId}"
+  if (lv.id.startsWith(SECTION_REF_LV_PREFIX)) {
+    return lv.id.slice(SECTION_REF_LV_PREFIX.length);
+  }
+  // Pasted/drawn levels that were linked: groupId = "section-ref:storey-{storeyId}"
+  if (lv.groupId?.startsWith(SECTION_REF_STOREY_GROUP_PREFIX)) {
+    return lv.groupId.slice(SECTION_REF_STOREY_GROUP_PREFIX.length);
+  }
+  return null;
 }
 
 /**
  * Find the first building ID in the project structure.
- * If no buildings exist, returns null.
  */
 function getFirstBuildingId(): string | null {
   const { projectStructure } = useAppStore.getState();
@@ -59,33 +72,15 @@ function storeyExistsAtElevation(elevation: number): boolean {
 }
 
 // ============================================================================
-// Snapshot helpers
+// Snapshot helpers for change detection
 // ============================================================================
 
-interface LevelSnapshot {
-  id: string;
-  elevation: number;
-  description: string;
-  startY: number;
-}
-
-function buildLevelSnapshots(shapes: any[]): Map<string, LevelSnapshot> {
-  const map = new Map<string, LevelSnapshot>();
-  for (const s of shapes) {
-    if (s.type !== 'level') continue;
-    map.set(s.id, {
-      id: s.id,
-      elevation: s.elevation ?? s.peil ?? Math.round(-(s.start?.y ?? 0)),
-      description: s.description ?? '',
-      startY: s.start?.y ?? 0,
-    });
-  }
-  return map;
-}
-
-function snapshotFingerprint(snaps: Map<string, LevelSnapshot>): string {
-  return [...snaps.values()]
-    .map(s => `${s.id}:${s.elevation}:${s.description}:${s.startY}`)
+function buildLevelFingerprint(shapes: any[]): string {
+  return shapes
+    .filter((s: any) => s.type === 'level')
+    .map((s: any) =>
+      `${s.id}:${s.drawingId}:${s.elevation ?? ''}:${s.peil ?? ''}:${s.description ?? ''}:${s.start?.y ?? ''}:${s.groupId ?? ''}`
+    )
     .sort()
     .join('|');
 }
@@ -96,30 +91,30 @@ function snapshotFingerprint(snaps: Map<string, LevelSnapshot>): string {
 
 export function useLevelStoreySync(): void {
   const prevFingerprintRef = useRef<string>('');
-  const prevIdsRef = useRef<Set<string>>(new Set());
+  const prevLevelIdsRef = useRef<Set<string>>(new Set());
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     // Initialise previous state
     const initial = useAppStore.getState();
-    const initialSnaps = buildLevelSnapshots(initial.shapes);
-    prevFingerprintRef.current = snapshotFingerprint(initialSnaps);
-    prevIdsRef.current = new Set(initialSnaps.keys());
+    prevFingerprintRef.current = buildLevelFingerprint(initial.shapes);
+    prevLevelIdsRef.current = new Set(
+      initial.shapes.filter((s: any) => s.type === 'level').map((s: any) => s.id)
+    );
 
     const unsubscribe = useAppStore.subscribe((state, prevState) => {
       // Only react when shapes change
       if (state.shapes === prevState.shapes) return;
 
-      const currentSnaps = buildLevelSnapshots(state.shapes);
-      const fingerprint = snapshotFingerprint(currentSnaps);
+      const fingerprint = buildLevelFingerprint(state.shapes);
       if (fingerprint === prevFingerprintRef.current) return;
-
-      const prevIds = prevFingerprintRef.current; // used for debounce comparison only
       prevFingerprintRef.current = fingerprint;
 
       // Capture the previous ID set before updating
-      const capturedPrevIds = new Set(prevIdsRef.current);
-      prevIdsRef.current = new Set(currentSnaps.keys());
+      const capturedPrevIds = new Set(prevLevelIdsRef.current);
+      prevLevelIdsRef.current = new Set(
+        state.shapes.filter((s: any) => s.type === 'level').map((s: any) => s.id)
+      );
 
       // Debounce to avoid excessive updates during drag operations
       if (timerRef.current !== null) {
@@ -161,22 +156,23 @@ function syncLevels(prevLevelIds: Set<string>): void {
     }
   }
 
-  // Get all level shapes in section drawings
+  // Determine which drawings are section drawings
   const sectionDrawingIds = new Set(
     drawings.filter((d: any) => d.drawingType === 'section').map((d: any) => d.id)
   );
 
+  // Get all level shapes in section drawings
   const sectionLevels = shapes.filter(
     (s: any) => s.type === 'level' && sectionDrawingIds.has(s.drawingId)
   ) as LevelShape[];
 
   for (const lv of sectionLevels) {
     const elevation = lv.elevation ?? lv.peil ?? Math.round(-lv.start.y);
+    const linkedStoreyId = getLinkedStoreyId(lv);
 
-    // --- Case 1: Existing section-ref level → sync properties to storey ---
-    const storeyId = storeyIdFromRefLevel(lv.id);
-    if (storeyId) {
-      const existing = storeyMap.get(storeyId);
+    // --- Case 1: Level is already linked to a storey → sync property changes ---
+    if (linkedStoreyId) {
+      const existing = storeyMap.get(linkedStoreyId);
       if (!existing) continue;
 
       const elevChanged = Math.abs(existing.elevation - elevation) >= 1;
@@ -186,23 +182,23 @@ function syncLevels(prevLevelIds: Set<string>): void {
         const updates: Record<string, any> = {};
         if (elevChanged) updates.elevation = elevation;
         if (nameChanged) updates.name = lv.description!;
-        updateStorey(existing.buildingId, storeyId, updates);
+        updateStorey(existing.buildingId, linkedStoreyId, updates);
       }
       continue;
     }
 
-    // --- Case 2: New level shape in a section drawing (e.g. pasted or drawn) ---
-    // Only handle shapes that were not present previously (i.e. newly added)
+    // --- Case 2: New unlinked level shape in a section drawing ---
+    // Only process shapes that were not present in the previous snapshot
     if (prevLevelIds.has(lv.id)) continue;
 
     // Skip if a storey already exists at this elevation
     if (storeyExistsAtElevation(elevation)) continue;
 
-    // Need at least one building
+    // Need at least one building to attach the storey to
     const buildingId = getFirstBuildingId();
     if (!buildingId) continue;
 
-    // Create a new storey
+    // Create a new storey in the project structure
     const newStoreyId = generateId();
     const storeyName = lv.description || `Level ${elevation >= 0 ? '+' : ''}${elevation}`;
 
@@ -212,11 +208,11 @@ function syncLevels(prevLevelIds: Set<string>): void {
       elevation,
     });
 
-    // Re-tag the level shape as a section-ref level linked to the new storey.
-    // This ensures future edits to this shape propagate back to the storey.
+    // Link the level shape to the new storey via its groupId.
+    // This enables future property edits on this shape to propagate
+    // to the storey through the sync logic above (Case 1).
     updateShape(lv.id, {
-      id: `${SECTION_REF_LV_PREFIX}${newStoreyId}`,
-      groupId: `section-ref:storey-${newStoreyId}`,
+      groupId: `${SECTION_REF_STOREY_GROUP_PREFIX}${newStoreyId}`,
     } as any);
   }
 }

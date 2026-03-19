@@ -172,7 +172,6 @@ export function registerModelBehaviors(): void {
 }
 
 export function unregisterModelBehaviors(): void {
-  unregisterLevelPreAdd();
   modelBehaviorRegistry.unregisterPreAdd('gridline');
   modelBehaviorRegistry.unregisterPostDelete('gridline');
   modelBehaviorRegistry.unregisterPostDelete('plate-system');
