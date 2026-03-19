@@ -677,22 +677,25 @@ const wallOpeningGripHandler: GripHandler = {
     const dirY = dy / wallLen;
     const halfW = wo.width / 2;
 
-    // Grip 0: left edge (positionAlongWall - width/2)
-    // Grip 1: right edge (positionAlongWall + width/2)
-    // Grip 2: center point (for body move)
+    // Same perpendicular convention as computeWallCorners/renderer
+    const wallAngle = Math.atan2(dy, dx);
+    const perpX = Math.sin(wallAngle);
+    const perpY = Math.cos(wallAngle);
+    let leftThick: number, rightThick: number;
+    if (hostWall.justification === 'left') { leftThick = 0; rightThick = hostWall.thickness; }
+    else if (hostWall.justification === 'right') { leftThick = hostWall.thickness; rightThick = 0; }
+    else { leftThick = hostWall.thickness / 2; rightThick = hostWall.thickness / 2; }
+    const centerFactor = (leftThick - rightThick) / 2;
+    const cx = perpX * centerFactor;
+    const cy = -perpY * centerFactor;
+    const sx = hostWall.start.x;
+    const sy = hostWall.start.y;
+
+    // Grip 0: left edge, Grip 1: right edge, Grip 2: center — all in wall center
     return [
-      {
-        x: hostWall.start.x + dirX * (wo.positionAlongWall - halfW),
-        y: hostWall.start.y + dirY * (wo.positionAlongWall - halfW),
-      },
-      {
-        x: hostWall.start.x + dirX * (wo.positionAlongWall + halfW),
-        y: hostWall.start.y + dirY * (wo.positionAlongWall + halfW),
-      },
-      {
-        x: hostWall.start.x + dirX * wo.positionAlongWall,
-        y: hostWall.start.y + dirY * wo.positionAlongWall,
-      },
+      { x: sx + dirX * (wo.positionAlongWall - halfW) + cx, y: sy + dirY * (wo.positionAlongWall - halfW) + cy },
+      { x: sx + dirX * (wo.positionAlongWall + halfW) + cx, y: sy + dirY * (wo.positionAlongWall + halfW) + cy },
+      { x: sx + dirX * wo.positionAlongWall + cx, y: sy + dirY * wo.positionAlongWall + cy },
     ];
   },
   getReferencePoint(shape: any): Point {

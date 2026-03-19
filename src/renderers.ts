@@ -1938,21 +1938,27 @@ function drawWall(renderCtx: ShapeRenderContext, shape: WallShape, invertColors:
   // Left side edge (corners[0] -> corners[1]) with opening gaps
   drawEdgeWithGaps(corners[0], corners[1], openingGaps);
 
-  // End cap edge (always draw — corners already account for miter angle)
-  ctx.beginPath();
-  ctx.moveTo(corners[1].x, corners[1].y);
-  ctx.lineTo(corners[2].x, corners[2].y);
-  ctx.stroke();
+  // End cap edge — skip if an opening touches the end (t1 >= 0.99)
+  const hasOpeningAtEnd = openingGaps.some(g => g.t1 >= 0.99);
+  if (!hasOpeningAtEnd) {
+    ctx.beginPath();
+    ctx.moveTo(corners[1].x, corners[1].y);
+    ctx.lineTo(corners[2].x, corners[2].y);
+    ctx.stroke();
+  }
 
   // Right side edge (corners[2] -> corners[3]) — reversed direction, so reverse gaps
   const reversedGaps = openingGaps.map(g => ({ t0: 1 - g.t1, t1: 1 - g.t0 })).sort((a, b) => a.t0 - b.t0);
   drawEdgeWithGaps(corners[2], corners[3], reversedGaps);
 
-  // Start cap edge (always draw)
-  ctx.beginPath();
-  ctx.moveTo(corners[3].x, corners[3].y);
-  ctx.lineTo(corners[0].x, corners[0].y);
-  ctx.stroke();
+  // Start cap edge — skip if an opening touches the start (t0 <= 0.01)
+  const hasOpeningAtStart = openingGaps.some(g => g.t0 <= 0.01);
+  if (!hasOpeningAtStart) {
+    ctx.beginPath();
+    ctx.moveTo(corners[3].x, corners[3].y);
+    ctx.lineTo(corners[0].x, corners[0].y);
+    ctx.stroke();
+  }
 
   // Resolve hatch settings
   let effectiveHatchType: string = shape.hatchType || 'none';
