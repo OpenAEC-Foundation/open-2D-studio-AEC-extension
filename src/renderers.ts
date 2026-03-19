@@ -316,13 +316,11 @@ function drawBeamPlan(renderCtx: ShapeRenderContext, shape: BeamShape, invertCol
   ctx.lineTo(corners[1].x, corners[1].y);
   ctx.stroke();
 
-  // End cap edge
-  if (!hasEndMiterBeam) {
-    ctx.beginPath();
-    ctx.moveTo(corners[1].x, corners[1].y);
-    ctx.lineTo(corners[2].x, corners[2].y);
-    ctx.stroke();
-  }
+  // End cap edge (always draw — corners already account for miter angle)
+  ctx.beginPath();
+  ctx.moveTo(corners[1].x, corners[1].y);
+  ctx.lineTo(corners[2].x, corners[2].y);
+  ctx.stroke();
 
   // Right side edge
   ctx.beginPath();
@@ -330,13 +328,11 @@ function drawBeamPlan(renderCtx: ShapeRenderContext, shape: BeamShape, invertCol
   ctx.lineTo(corners[3].x, corners[3].y);
   ctx.stroke();
 
-  // Start cap edge
-  if (!hasStartMiterBeam) {
-    ctx.beginPath();
-    ctx.moveTo(corners[3].x, corners[3].y);
-    ctx.lineTo(corners[0].x, corners[0].y);
-    ctx.stroke();
-  }
+  // Start cap edge (always draw)
+  ctx.beginPath();
+  ctx.moveTo(corners[3].x, corners[3].y);
+  ctx.lineTo(corners[0].x, corners[0].y);
+  ctx.stroke();
 
   if (showCenterline) {
     ctx.save();
@@ -601,7 +597,9 @@ function drawGridline(renderCtx: ShapeRenderContext, shape: GridlineShape, inver
   const origLineWidth = ctx.lineWidth;
   const scaledLineWidth = origLineWidth * scaleFactor;
 
-  const ext = renderCtx.gridlineExtension * scaleFactor;
+  // gridlineExtension is in paper-mm; multiply by LINE_DASH_REFERENCE_SCALE for
+  // scale-independent paper size (constant mm on paper regardless of drawing scale)
+  const ext = renderCtx.gridlineExtension * LINE_DASH_REFERENCE_SCALE;
   ctx.save();
   ctx.lineWidth = scaledLineWidth;
   ctx.setLineDash(renderCtx.getLineDash('dashdot'));
@@ -1677,18 +1675,16 @@ function drawWallSystem(renderCtx: ShapeRenderContext, shape: WallShape, system:
   const outerEnd1 = { x: end.x + perpX * (-halfTotal), y: end.y + perpY * (-halfTotal) };
   const outerEnd2 = { x: end.x + perpX * halfTotal, y: end.y + perpY * halfTotal };
 
-  if (shape.startCap !== 'miter') {
-    ctx.beginPath();
-    ctx.moveTo(outerStart1.x, outerStart1.y);
-    ctx.lineTo(outerStart2.x, outerStart2.y);
-    ctx.stroke();
-  }
-  if (shape.endCap !== 'miter') {
-    ctx.beginPath();
-    ctx.moveTo(outerEnd1.x, outerEnd1.y);
-    ctx.lineTo(outerEnd2.x, outerEnd2.y);
-    ctx.stroke();
-  }
+  // Always draw end caps (closed outline)
+  ctx.beginPath();
+  ctx.moveTo(outerStart1.x, outerStart1.y);
+  ctx.lineTo(outerStart2.x, outerStart2.y);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(outerEnd1.x, outerEnd1.y);
+  ctx.lineTo(outerEnd2.x, outerEnd2.y);
+  ctx.stroke();
 
   // Draw studs at grid positions
   const gridData = generateWallSystemGrid(shape, system);
@@ -1856,33 +1852,71 @@ function drawWall(renderCtx: ShapeRenderContext, shape: WallShape, invertColors:
   const hasStartMiter = shape.startCap === 'miter';
   const hasEndMiter = shape.endCap === 'miter';
 
-  // Left side edge
-  ctx.beginPath();
-  ctx.moveTo(corners[0].x, corners[0].y);
-  ctx.lineTo(corners[1].x, corners[1].y);
-  ctx.stroke();
-
-  // End cap edge
-  if (!hasEndMiter) {
-    ctx.beginPath();
-    ctx.moveTo(corners[1].x, corners[1].y);
-    ctx.lineTo(corners[2].x, corners[2].y);
-    ctx.stroke();
+  // Collect opening gaps along the wall (as fractions 0..1 of edge length)
+  const allShapes = useAppStore.getState().shapes;
+  const wallLen = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
+  const openingGaps: { t0: number; t1: number }[] = [];
+  if (wallLen > 0.001) {
+    const openings = allShapes.filter((s: any) => s.type === 'wall-opening' && s.hostWallId === shape.id);
+    for (const opening of openings) {
+      const wo = opening as any;
+      const halfW = wo.width / 2;
+      const t0 = Math.max(0, (wo.positionAlongWall - halfW) / wallLen);
+      const t1 = Math.min(1, (wo.positionAlongWall + halfW) / wallLen);
+      if (t1 > t0) openingGaps.push({ t0, t1 });
+    }
+    openingGaps.sort((a, b) => a.t0 - b.t0);
   }
 
-  // Right side edge
+  // Helper: draw a line between two corners, skipping opening gap intervals
+  const drawEdgeWithGaps = (
+    p0: { x: number; y: number },
+    p1: { x: number; y: number },
+    gaps: { t0: number; t1: number }[],
+  ) => {
+    if (gaps.length === 0) {
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(p1.x, p1.y);
+      ctx.stroke();
+      return;
+    }
+    let tCur = 0;
+    for (const gap of gaps) {
+      if (gap.t0 > tCur) {
+        ctx.beginPath();
+        ctx.moveTo(p0.x + (p1.x - p0.x) * tCur, p0.y + (p1.y - p0.y) * tCur);
+        ctx.lineTo(p0.x + (p1.x - p0.x) * gap.t0, p0.y + (p1.y - p0.y) * gap.t0);
+        ctx.stroke();
+      }
+      tCur = gap.t1;
+    }
+    if (tCur < 1) {
+      ctx.beginPath();
+      ctx.moveTo(p0.x + (p1.x - p0.x) * tCur, p0.y + (p1.y - p0.y) * tCur);
+      ctx.lineTo(p1.x, p1.y);
+      ctx.stroke();
+    }
+  };
+
+  // Left side edge (corners[0] -> corners[1]) with opening gaps
+  drawEdgeWithGaps(corners[0], corners[1], openingGaps);
+
+  // End cap edge (always draw — corners already account for miter angle)
   ctx.beginPath();
-  ctx.moveTo(corners[2].x, corners[2].y);
-  ctx.lineTo(corners[3].x, corners[3].y);
+  ctx.moveTo(corners[1].x, corners[1].y);
+  ctx.lineTo(corners[2].x, corners[2].y);
   ctx.stroke();
 
-  // Start cap edge
-  if (!hasStartMiter) {
-    ctx.beginPath();
-    ctx.moveTo(corners[3].x, corners[3].y);
-    ctx.lineTo(corners[0].x, corners[0].y);
-    ctx.stroke();
-  }
+  // Right side edge (corners[2] -> corners[3]) — reversed direction, so reverse gaps
+  const reversedGaps = openingGaps.map(g => ({ t0: 1 - g.t1, t1: 1 - g.t0 })).sort((a, b) => a.t0 - b.t0);
+  drawEdgeWithGaps(corners[2], corners[3], reversedGaps);
+
+  // Start cap edge (always draw)
+  ctx.beginPath();
+  ctx.moveTo(corners[3].x, corners[3].y);
+  ctx.lineTo(corners[0].x, corners[0].y);
+  ctx.stroke();
 
   // Resolve hatch settings
   let effectiveHatchType: string = shape.hatchType || 'none';
@@ -1913,14 +1947,39 @@ function drawWall(renderCtx: ShapeRenderContext, shape: WallShape, invertColors:
   if ((effectiveHatchType && effectiveHatchType !== 'none') || effectivePatternId) {
     const strokeWidth = ctx.lineWidth;
     ctx.save();
-    // Clip to wall polygon
+    // Clip to wall polygon, excluding opening rectangles (evenodd rule)
     ctx.beginPath();
     ctx.moveTo(corners[0].x, corners[0].y);
     ctx.lineTo(corners[1].x, corners[1].y);
     ctx.lineTo(corners[2].x, corners[2].y);
     ctx.lineTo(corners[3].x, corners[3].y);
     ctx.closePath();
-    ctx.clip();
+    // Cut out opening rectangles from the clip region
+    if (openingGaps.length > 0 && wallLen > 0.001) {
+      const hDirX = (end.x - start.x) / wallLen;
+      const hDirY = (end.y - start.y) / wallLen;
+      const hPerpX = -hDirY;
+      const hPerpY = hDirX;
+      let hLeftThick: number, hRightThick: number;
+      if (shape.justification === 'left') { hLeftThick = 0; hRightThick = shape.thickness; }
+      else if (shape.justification === 'right') { hLeftThick = shape.thickness; hRightThick = 0; }
+      else { hLeftThick = shape.thickness / 2; hRightThick = shape.thickness / 2; }
+      for (const gap of openingGaps) {
+        const gStart = gap.t0 * wallLen;
+        const gEnd = gap.t1 * wallLen;
+        const oc0 = { x: start.x + hDirX * gStart + hPerpX * hLeftThick, y: start.y + hDirY * gStart + hPerpY * hLeftThick };
+        const oc1 = { x: start.x + hDirX * gEnd + hPerpX * hLeftThick, y: start.y + hDirY * gEnd + hPerpY * hLeftThick };
+        const oc2 = { x: start.x + hDirX * gEnd - hPerpX * hRightThick, y: start.y + hDirY * gEnd - hPerpY * hRightThick };
+        const oc3 = { x: start.x + hDirX * gStart - hPerpX * hRightThick, y: start.y + hDirY * gStart - hPerpY * hRightThick };
+        // Wind counter-clockwise (opposite to outer) for evenodd subtraction
+        ctx.moveTo(oc0.x, oc0.y);
+        ctx.lineTo(oc3.x, oc3.y);
+        ctx.lineTo(oc2.x, oc2.y);
+        ctx.lineTo(oc1.x, oc1.y);
+        ctx.closePath();
+      }
+    }
+    (ctx as any).clip('evenodd');
 
     if (effectiveBackgroundColor) {
       ctx.fillStyle = effectiveBackgroundColor;
@@ -2021,50 +2080,7 @@ function drawWall(renderCtx: ShapeRenderContext, shape: WallShape, invertColors:
     ctx.restore();
   }
 
-  // Clear wall fill for hosted openings (draw background-colored rectangles over opening areas)
-  {
-    const allShapes = useAppStore.getState().shapes;
-    const openings = allShapes.filter((s: any) => s.type === 'wall-opening' && s.hostWallId === shape.id);
-    if (openings.length > 0) {
-      const wallLen = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
-      if (wallLen > 0.001) {
-        const dirX = (end.x - start.x) / wallLen;
-        const dirY = (end.y - start.y) / wallLen;
-        const perpX = -dirY;
-        const perpY = dirX;
-
-        let leftThick: number;
-        let rightThick: number;
-        if (shape.justification === 'left') { leftThick = 0; rightThick = shape.thickness; }
-        else if (shape.justification === 'right') { leftThick = shape.thickness; rightThick = 0; }
-        else { leftThick = shape.thickness / 2; rightThick = shape.thickness / 2; }
-
-        const bgColor = invertColors ? '#ffffff' : '#1e1e1e';
-        for (const opening of openings) {
-          const wo = opening as any;
-          const halfW = wo.width / 2;
-          const startAlong = wo.positionAlongWall - halfW;
-          const endAlong = wo.positionAlongWall + halfW;
-
-          const c0 = { x: start.x + dirX * startAlong + perpX * leftThick, y: start.y + dirY * startAlong + perpY * leftThick };
-          const c1 = { x: start.x + dirX * endAlong + perpX * leftThick, y: start.y + dirY * endAlong + perpY * leftThick };
-          const c2 = { x: start.x + dirX * endAlong - perpX * rightThick, y: start.y + dirY * endAlong - perpY * rightThick };
-          const c3 = { x: start.x + dirX * startAlong - perpX * rightThick, y: start.y + dirY * startAlong - perpY * rightThick };
-
-          ctx.save();
-          ctx.fillStyle = bgColor;
-          ctx.beginPath();
-          ctx.moveTo(c0.x, c0.y);
-          ctx.lineTo(c1.x, c1.y);
-          ctx.lineTo(c2.x, c2.y);
-          ctx.lineTo(c3.x, c3.y);
-          ctx.closePath();
-          ctx.fill();
-          ctx.restore();
-        }
-      }
-    }
-  }
+  // (Opening gaps in wall edges are handled above via drawEdgeWithGaps)
 }
 
 // ---------------------------------------------------------------------------

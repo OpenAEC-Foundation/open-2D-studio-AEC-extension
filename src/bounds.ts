@@ -49,7 +49,10 @@ function getGridlineBounds(shape: any, drawingScale?: number): ShapeBounds | nul
   const glShape = shape as GridlineShape;
   const glSf = annotationScaleFactor(drawingScale);
   const r = (glShape.bubbleRadius || 0) * glSf;
-  const glExt = 500 * glSf;
+  // gridlineExtension is in paper-mm; multiply by ANNOTATION_REFERENCE_SCALE (0.01)
+  // for scale-independent paper size
+  const storeExt = useAppStore.getState().gridlineExtension;
+  const glExt = storeExt * 0.01;
   return {
     minX: Math.min(glShape.start.x, glShape.end.x) - r - glExt,
     minY: Math.min(glShape.start.y, glShape.end.y) - r - glExt,

@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Square, Circle, Palette, Settings, Layers, FolderTree, Shapes, FileText, FileBarChart, DoorOpen, CircleDot } from 'lucide-react';
+import { Square, Circle, Palette, Settings, Layers, FolderTree, Shapes, FileText, FileBarChart, DoorOpen, CircleDot, Download, Copy, RefreshCw } from 'lucide-react';
 import {
   useAppStore,
   LineIcon, ArcIcon, BeamIcon, GridLineIcon, LevelIcon,
@@ -14,6 +14,8 @@ import {
 } from 'open-2d-studio';
 import type { ImageShape, CPTShape } from 'open-2d-studio';
 import { showCPTFileDialog, parseCPTFile } from './cptFileService';
+import { generateIFCX, exportIFCX } from './ifcxGenerator';
+import type { IfcxGenerationResult } from './ifcxGenerator';
 
 type ShapeMode = 'line' | 'arc' | 'rectangle' | 'circle';
 
@@ -634,14 +636,123 @@ function PilePlanTabContent() {
   );
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/**
+ * IFCX Tab Content — JSON-based IFC export panel.
+ *
+ * Shows an "Export IFCX" button, a JSON viewer with copy/download,
+ * and statistics about the generated IFCX file.
+ */
+function IfcxTabContent() {
+  const [ifcxResult, setIfcxResult] = useState<IfcxGenerationResult | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleGenerate = useCallback(() => {
+    const result = generateIFCX();
+    setIfcxResult(result);
+  }, []);
+
+  const handleExport = useCallback(() => {
+    exportIFCX();
+  }, []);
+
+  const handleCopy = useCallback(async () => {
+    if (!ifcxResult?.content) return;
+    try {
+      await navigator.clipboard.writeText(ifcxResult.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for environments where clipboard API is unavailable
+      const ta = document.createElement('textarea');
+      ta.value = ifcxResult.content;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, [ifcxResult]);
+
+  return (
+    <div className="ribbon-groups" style={{ alignItems: 'stretch' }}>
+      <RibbonGroup label="IFCX Export">
+        <RibbonButton
+          icon={<Download size={24} />}
+          label="Export IFCX"
+          onClick={handleExport}
+          tooltip="Export current model as IFCX JSON file (.ifcx)"
+        />
+        <RibbonButton
+          icon={<RefreshCw size={24} />}
+          label="Generate"
+          onClick={handleGenerate}
+          tooltip="Generate IFCX JSON preview (view in panel below)"
+        />
+        <RibbonButton
+          icon={<Copy size={24} />}
+          label={copied ? 'Copied!' : 'Copy JSON'}
+          onClick={handleCopy}
+          tooltip="Copy generated IFCX JSON to clipboard"
+        />
+      </RibbonGroup>
+
+      <RibbonGroup label="Statistics">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '2px 8px', fontSize: 11, color: 'var(--cad-text-dim, #888)' }}>
+          <div>
+            <span style={{ color: 'var(--cad-text-dim)' }}>Entities: </span>
+            <span style={{ color: 'var(--cad-text)', fontWeight: 500 }}>{ifcxResult?.entityCount ?? 0}</span>
+          </div>
+          <div>
+            <span style={{ color: 'var(--cad-text-dim)' }}>Size: </span>
+            <span style={{ color: 'var(--cad-text)', fontWeight: 500 }}>{ifcxResult ? formatFileSize(ifcxResult.fileSize) : '0 B'}</span>
+          </div>
+          <div>
+            <span style={{ color: 'var(--cad-text-dim)' }}>Schema: </span>
+            <span style={{ color: 'var(--cad-text)', fontWeight: 500 }}>IFCX (JSON)</span>
+          </div>
+        </div>
+      </RibbonGroup>
+
+      <RibbonGroup label="About">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '2px 8px', fontSize: 10, color: 'var(--cad-text-dim, #888)', maxWidth: 200 }}>
+          <div>IFCX is a JSON-based IFC format by the OpenAEC Foundation.</div>
+          <div>Each IFC entity becomes a JSON object with type, globalId, attributes, and geometry.</div>
+        </div>
+      </RibbonGroup>
+    </div>
+  );
+}
+
 export function registerRibbonTabs(): void {
   const s = useAppStore.getState();
   s.addExtensionRibbonTab({ extensionId: 'aec', id: 'structural', label: 'AEC', order: 30, render: () => <StructuralTabContent /> });
   s.addExtensionRibbonTab({ extensionId: 'aec', id: 'pile-plan', label: 'Pile Plan', order: 31, render: () => <PilePlanTabContent /> });
+  s.addExtensionRibbonTab({ extensionId: 'aec', id: 'ifcx', label: 'IFCX', order: 45, render: () => <IfcxTabContent /> });
+
+  // Also add an "Export IFCX" button to the built-in IFC tab
+  s.addExtensionRibbonButton({
+    extensionId: 'aec',
+    tab: 'ifc',
+    group: 'IFCX',
+    label: 'Export IFCX',
+    size: 'large',
+    onClick: () => exportIFCX(),
+    tooltip: 'Export current model as IFCX JSON file (.ifcx) — a JSON-based IFC format by the OpenAEC Foundation',
+  });
 }
 
 export function unregisterRibbonTabs(): void {
   const s = useAppStore.getState();
   s.removeExtensionRibbonTab('aec', 'structural');
   s.removeExtensionRibbonTab('aec', 'pile-plan');
+  s.removeExtensionRibbonTab('aec', 'ifcx');
+  s.removeExtensionRibbonButton('aec', 'Export IFCX');
 }

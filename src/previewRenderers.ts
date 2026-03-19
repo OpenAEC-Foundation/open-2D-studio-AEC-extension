@@ -118,8 +118,9 @@ function drawGridlinePreview(
   const glDx = Math.cos(glAngle);
   const glDy = Math.sin(glAngle);
 
-  // Line extends beyond start/end (at reference scale), scaled for current drawing scale
-  const glExt = renderCtx.gridlineExtension * glScaleFactor;
+  // gridlineExtension is in paper-mm; multiply by LINE_DASH_REFERENCE_SCALE for
+  // scale-independent paper size (constant mm on paper regardless of drawing scale)
+  const glExt = renderCtx.gridlineExtension * LINE_DASH_REFERENCE_SCALE;
   const glScaledLineWidth = ctx.lineWidth * glScaleFactor;
 
   // Draw dash-dot line with scale-aware pattern (matching actual gridline)
