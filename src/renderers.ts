@@ -3123,10 +3123,8 @@ function drawSlabLabel(renderCtx: ShapeRenderContext, shape: SlabLabelShape, inv
         }
       }
       // Top of slab = storey elevation + slab elevation offset
-      // Bottom of slab = top - thickness
       const topOfSlab = storeyElevation + (linkedSlab.elevation || 0);
-      const bottomOfSlab = topOfSlab - linkedSlab.thickness;
-      peilText = (bottomOfSlab >= 0 ? '+' : '') + String(Math.round(bottomOfSlab));
+      peilText = (topOfSlab >= 0 ? '+' : '') + String(Math.round(topOfSlab));
     }
   }
 
@@ -3144,8 +3142,8 @@ function drawSlabLabel(renderCtx: ShapeRenderContext, shape: SlabLabelShape, inv
           if (st) { storeyElev = st.elevation; break; }
         }
       }
-      const bottom = storeyElev + (slab.elevation || 0) - slab.thickness;
-      peilText = (bottom >= 0 ? '+' : '') + String(Math.round(bottom));
+      const top = storeyElev + (slab.elevation || 0);
+      peilText = (top >= 0 ? '+' : '') + String(Math.round(top));
     }
   }
 
@@ -3157,8 +3155,8 @@ function drawSlabLabel(renderCtx: ShapeRenderContext, shape: SlabLabelShape, inv
       for (const building of store.projectStructure.buildings) {
         const st = building.storeys.find((s: any) => s.id === drawing.storeyId);
         if (st) {
-          const bottom = st.elevation - thicknessVal;
-          peilText = (bottom >= 0 ? '+' : '') + String(Math.round(bottom));
+          const top = st.elevation;
+          peilText = (top >= 0 ? '+' : '') + String(Math.round(top));
           break;
         }
       }
