@@ -57,10 +57,21 @@ export function registerHandlePoints(): void {
     if (wallLen < 0.001) return [];
     const dirX = dx / wallLen;
     const dirY = dy / wallLen;
-    return [{
-      x: hostWall.start.x + dirX * wo.positionAlongWall,
-      y: hostWall.start.y + dirY * wo.positionAlongWall,
-    }];
+    const halfW = wo.width / 2;
+    return [
+      {
+        x: hostWall.start.x + dirX * (wo.positionAlongWall - halfW),
+        y: hostWall.start.y + dirY * (wo.positionAlongWall - halfW),
+      },
+      {
+        x: hostWall.start.x + dirX * (wo.positionAlongWall + halfW),
+        y: hostWall.start.y + dirY * (wo.positionAlongWall + halfW),
+      },
+      {
+        x: hostWall.start.x + dirX * wo.positionAlongWall,
+        y: hostWall.start.y + dirY * wo.positionAlongWall,
+      },
+    ];
   });
 
   shapeHandleRegistry.register('slab', (shape) => {

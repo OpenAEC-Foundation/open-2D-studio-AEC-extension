@@ -168,9 +168,11 @@ export function registerModelBehaviors(): void {
   modelBehaviorRegistry.registerPostDelete('wall-opening', (_shape: any, _allShapes: any[]) => {
     return { deleteIds: [], updates: new Map<string, Record<string, any>>() };
   });
+
 }
 
 export function unregisterModelBehaviors(): void {
+  unregisterLevelPreAdd();
   modelBehaviorRegistry.unregisterPreAdd('gridline');
   modelBehaviorRegistry.unregisterPostDelete('gridline');
   modelBehaviorRegistry.unregisterPostDelete('plate-system');

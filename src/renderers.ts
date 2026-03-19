@@ -828,6 +828,8 @@ function drawPileContour(renderCtx: ShapeRenderContext, cx: number, cy: number, 
 /** Draw a fill pattern inside the pile circle */
 function drawPileFillPattern(renderCtx: ShapeRenderContext, cx: number, cy: number, R: number, pattern: number, contourType: string = 'circle'): void {
   const ctx = renderCtx.ctx;
+  const savedAlpha = ctx.globalAlpha;
+  if (renderCtx.transparentBackground) ctx.globalAlpha = 0.3;
   const fillColor = ctx.strokeStyle as string;
   const isSquare = contourType === 'square';
 
@@ -980,6 +982,7 @@ function drawPileFillPattern(renderCtx: ShapeRenderContext, cx: number, cy: numb
     default:
       break;
   }
+  ctx.globalAlpha = savedAlpha;
 }
 
 /** Draw a pile shape using contourType + fillPattern */
@@ -1351,7 +1354,7 @@ function drawFoundationZone(renderCtx: ShapeRenderContext, shape: FoundationZone
   const opacity = fillOpacity ?? 0.15;
   const color = fillColor || '#4488ff';
   ctx.fillStyle = color;
-  ctx.globalAlpha = opacity;
+  ctx.globalAlpha = renderCtx.transparentBackground ? opacity * 0.3 : opacity;
   ctx.fill();
   ctx.globalAlpha = 1;
 
@@ -1510,6 +1513,7 @@ function drawArcWall(renderCtx: ShapeRenderContext, shape: WallShape, invertColo
   if ((effectiveHatchType && effectiveHatchType !== 'none') || effectivePatternId) {
     const strokeWidth = ctx.lineWidth;
     ctx.save();
+    if (renderCtx.transparentBackground) ctx.globalAlpha = 0.3;
 
     buildArcPath();
     ctx.clip();
@@ -1647,7 +1651,8 @@ function drawWallSystem(renderCtx: ShapeRenderContext, shape: WallShape, system:
 
     ctx.save();
     ctx.fillStyle = invertColors ? '#ffffff' : layer.color;
-    ctx.globalAlpha = layer.function === 'air-gap' ? 0.15 : 0.5;
+    const layerAlpha = layer.function === 'air-gap' ? 0.15 : 0.5;
+    ctx.globalAlpha = renderCtx.transparentBackground ? layerAlpha * 0.3 : layerAlpha;
     ctx.beginPath();
     ctx.moveTo(sl.x, sl.y);
     ctx.lineTo(el.x, el.y);
@@ -1716,7 +1721,8 @@ function drawWallSystem(renderCtx: ShapeRenderContext, shape: WallShape, system:
 
     ctx.save();
     ctx.fillStyle = isSelected ? '#00ff88' : (invertColors ? '#333333' : stud.color);
-    ctx.globalAlpha = isSelected ? 0.7 : 0.6;
+    const studAlpha = isSelected ? 0.7 : 0.6;
+    ctx.globalAlpha = renderCtx.transparentBackground ? studAlpha * 0.3 : studAlpha;
     ctx.beginPath();
     ctx.moveTo(c1.x, c1.y);
     ctx.lineTo(c2.x, c2.y);
@@ -1947,6 +1953,7 @@ function drawWall(renderCtx: ShapeRenderContext, shape: WallShape, invertColors:
   if ((effectiveHatchType && effectiveHatchType !== 'none') || effectivePatternId) {
     const strokeWidth = ctx.lineWidth;
     ctx.save();
+    if (renderCtx.transparentBackground) ctx.globalAlpha = 0.3;
     // Clip to wall polygon, excluding opening rectangles (evenodd rule)
     ctx.beginPath();
     ctx.moveTo(corners[0].x, corners[0].y);
@@ -2211,6 +2218,7 @@ function drawSlab(renderCtx: ShapeRenderContext, shape: SlabShape, invertColors:
   if (renderCtx.slabSurfacePatternEnabled !== false && ((effectiveHatchType && effectiveHatchType !== 'none') || effectivePatternId)) {
     const strokeWidth = ctx.lineWidth;
     ctx.save();
+    if (renderCtx.transparentBackground) ctx.globalAlpha = 0.3;
 
     // Clip to outer boundary minus inner contours using evenodd
     traceSlabPath();
@@ -2419,7 +2427,8 @@ function drawSpace(renderCtx: ShapeRenderContext, shape: SpaceShape, _invertColo
   }
   ctx.closePath();
 
-  ctx.globalAlpha = fillOpacity ?? 0.1;
+  const spaceOpacity = fillOpacity ?? 0.1;
+  ctx.globalAlpha = renderCtx.transparentBackground ? spaceOpacity * 0.3 : spaceOpacity;
   ctx.fillStyle = fillColor || '#00ff00';
   ctx.fill();
   ctx.globalAlpha = 1;
@@ -2494,7 +2503,8 @@ function drawPlateSystem(renderCtx: ShapeRenderContext, shape: PlateSystemShape,
 
   // 2. Fill contour with light color
   if (fillColor) {
-    ctx.globalAlpha = fillOpacity ?? 0.15;
+    const plateOpacity = fillOpacity ?? 0.15;
+    ctx.globalAlpha = renderCtx.transparentBackground ? plateOpacity * 0.3 : plateOpacity;
     ctx.fillStyle = fillColor;
     ctx.fill();
     ctx.globalAlpha = 1;
@@ -3152,11 +3162,14 @@ function drawColumn(renderCtx: ShapeRenderContext, shape: ColumnShape, invertCol
   }
 
   ctx.fillStyle = fillColor;
+  if (renderCtx.transparentBackground) ctx.globalAlpha = 0.3;
   ctx.fillRect(-halfW, -halfD, width, depth);
+  if (renderCtx.transparentBackground) ctx.globalAlpha = 1;
 
   // Draw material hatch pattern
   ctx.strokeStyle = strokeColor;
   ctx.lineWidth = lineWidth * 0.5;
+  if (renderCtx.transparentBackground) ctx.globalAlpha = 0.3;
 
   if (material === 'concrete') {
     // Diagonal hatch pattern
@@ -3193,6 +3206,7 @@ function drawColumn(renderCtx: ShapeRenderContext, shape: ColumnShape, invertCol
     ctx.stroke();
   }
   // timber: no hatch, just fill
+  if (renderCtx.transparentBackground) ctx.globalAlpha = 1;
 
   // Outline
   ctx.strokeStyle = strokeColor;

@@ -6,6 +6,7 @@ import {
   usePileAutoDimensioning,
   usePileAutoPuntniveau,
 } from 'open-2d-studio';
+import { useLevelStoreySync } from './levelStoreySync';
 
 const AUTOMATION_IDS = [
   'ifc-auto-regenerate',
@@ -13,6 +14,7 @@ const AUTOMATION_IDS = [
   'pile-auto-numbering',
   'pile-auto-dimensioning',
   'pile-auto-puntniveau',
+  'level-storey-sync',
 ] as const;
 
 export function registerAutomations(): void {
@@ -21,6 +23,7 @@ export function registerAutomations(): void {
   automationRegistry.register({ id: 'pile-auto-numbering', useHook: usePileAutoNumbering });
   automationRegistry.register({ id: 'pile-auto-dimensioning', useHook: usePileAutoDimensioning });
   automationRegistry.register({ id: 'pile-auto-puntniveau', useHook: usePileAutoPuntniveau });
+  automationRegistry.register({ id: 'level-storey-sync', useHook: useLevelStoreySync });
 }
 
 export function unregisterAutomations(): void {

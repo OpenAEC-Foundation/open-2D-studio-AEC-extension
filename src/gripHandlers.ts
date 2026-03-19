@@ -675,12 +675,25 @@ const wallOpeningGripHandler: GripHandler = {
 
     const dirX = dx / wallLen;
     const dirY = dy / wallLen;
+    const halfW = wo.width / 2;
 
-    // Return the center point of the opening along the wall centerline
-    return [{
-      x: hostWall.start.x + dirX * wo.positionAlongWall,
-      y: hostWall.start.y + dirY * wo.positionAlongWall,
-    }];
+    // Grip 0: left edge (positionAlongWall - width/2)
+    // Grip 1: right edge (positionAlongWall + width/2)
+    // Grip 2: center point (for body move)
+    return [
+      {
+        x: hostWall.start.x + dirX * (wo.positionAlongWall - halfW),
+        y: hostWall.start.y + dirY * (wo.positionAlongWall - halfW),
+      },
+      {
+        x: hostWall.start.x + dirX * (wo.positionAlongWall + halfW),
+        y: hostWall.start.y + dirY * (wo.positionAlongWall + halfW),
+      },
+      {
+        x: hostWall.start.x + dirX * wo.positionAlongWall,
+        y: hostWall.start.y + dirY * wo.positionAlongWall,
+      },
+    ];
   },
   getReferencePoint(shape: any): Point {
     const wo = shape as WallOpeningShape;
@@ -726,8 +739,52 @@ const wallOpeningGripHandler: GripHandler = {
     return { positionAlongWall: newPosition };
   },
   computeGripUpdate(shape: any, gripIndex: number, newPos: Point) {
-    if (gripIndex !== 0) return null;
-    return this.computeBodyMove(shape, newPos);
+    const wo = shape as WallOpeningShape;
+    const allShapes = useAppStore.getState().shapes;
+    const hostWall = allShapes.find(s => s.id === wo.hostWallId) as WallShape | undefined;
+    if (!hostWall) return null;
+
+    const dx = hostWall.end.x - hostWall.start.x;
+    const dy = hostWall.end.y - hostWall.start.y;
+    const wallLen = Math.sqrt(dx * dx + dy * dy);
+    if (wallLen < 0.001) return null;
+
+    const dirX = dx / wallLen;
+    const dirY = dy / wallLen;
+
+    // Project newPos onto the wall centerline
+    const relX = newPos.x - hostWall.start.x;
+    const relY = newPos.y - hostWall.start.y;
+    const projectedDist = relX * dirX + relY * dirY;
+
+    const MIN_WIDTH = 50; // minimum opening width in mm
+
+    if (gripIndex === 0) {
+      // Dragging the left edge (start edge of opening)
+      const rightEdge = wo.positionAlongWall + wo.width / 2;
+      // Clamp left edge: cannot go past wall start or past right edge
+      const clampedLeft = Math.max(0, Math.min(rightEdge - MIN_WIDTH, projectedDist));
+      const newWidth = rightEdge - clampedLeft;
+      const newCenter = clampedLeft + newWidth / 2;
+      return { positionAlongWall: newCenter, width: newWidth };
+    }
+
+    if (gripIndex === 1) {
+      // Dragging the right edge (end edge of opening)
+      const leftEdge = wo.positionAlongWall - wo.width / 2;
+      // Clamp right edge: cannot go past wall end or past left edge
+      const clampedRight = Math.min(wallLen, Math.max(leftEdge + MIN_WIDTH, projectedDist));
+      const newWidth = clampedRight - leftEdge;
+      const newCenter = leftEdge + newWidth / 2;
+      return { positionAlongWall: newCenter, width: newWidth };
+    }
+
+    if (gripIndex === 2) {
+      // Center grip: slide the opening along the wall (same as body move)
+      return this.computeBodyMove(shape, newPos);
+    }
+
+    return null;
   },
 };
 

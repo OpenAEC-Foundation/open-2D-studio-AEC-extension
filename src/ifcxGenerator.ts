@@ -878,7 +878,7 @@ function convertRebar(rebar: RebarShape): IfcxEntity {
 
 export function generateIFCX(): IfcxGenerationResult {
   const state = useAppStore.getState();
-  const { shapes, wallTypes, slabTypes, projectStructure, drawings, pileTypes } = state;
+  const { shapes, wallTypes, projectStructure, pileTypes } = state;
 
   const timestamp = new Date().toISOString();
   const entities: IfcxEntity[] = [];

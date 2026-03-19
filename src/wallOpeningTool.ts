@@ -74,7 +74,7 @@ export function registerWallOpeningTool(): void {
     toolName: TOOL_NAME,
 
     handleClick(snappedPos: Point, _shiftKey: boolean): boolean {
-      const tolerance = 200; // mm tolerance for wall hit detection
+      const tolerance = 500; // mm tolerance for wall hit detection
       const wall = findWallAtPoint(snappedPos, tolerance);
 
       if (!wall) {

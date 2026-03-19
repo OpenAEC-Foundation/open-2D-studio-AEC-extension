@@ -652,14 +652,29 @@ function formatFileSize(bytes: number): string {
 function IfcxTabContent() {
   const [ifcxResult, setIfcxResult] = useState<IfcxGenerationResult | null>(null);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleGenerate = useCallback(() => {
-    const result = generateIFCX();
-    setIfcxResult(result);
+    try {
+      setError(null);
+      const result = generateIFCX();
+      setIfcxResult(result);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      console.error('IFCX generation failed:', err);
+    }
   }, []);
 
   const handleExport = useCallback(() => {
-    exportIFCX();
+    try {
+      setError(null);
+      exportIFCX();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      console.error('IFCX export failed:', err);
+    }
   }, []);
 
   const handleCopy = useCallback(async () => {
@@ -720,6 +735,25 @@ function IfcxTabContent() {
           </div>
         </div>
       </RibbonGroup>
+
+      {error && (
+        <RibbonGroup label="Error">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '2px 8px', fontSize: 11, color: '#ff6b6b', maxWidth: 250 }}>
+            <div style={{ fontWeight: 500 }}>Generation failed</div>
+            <div style={{ fontSize: 10, wordBreak: 'break-word' }}>{error}</div>
+          </div>
+        </RibbonGroup>
+      )}
+
+      {ifcxResult && !error && (
+        <RibbonGroup label="Preview">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '2px 4px', fontSize: 10, maxWidth: 300, maxHeight: 72, overflow: 'auto' }}>
+            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--cad-text)', fontFamily: 'monospace', fontSize: 9, lineHeight: 1.3 }}>
+              {ifcxResult.content.slice(0, 500)}{ifcxResult.content.length > 500 ? '...' : ''}
+            </pre>
+          </div>
+        </RibbonGroup>
+      )}
 
       <RibbonGroup label="About">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '2px 8px', fontSize: 10, color: 'var(--cad-text-dim, #888)', maxWidth: 200 }}>
