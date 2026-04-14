@@ -140,9 +140,9 @@ export function useLevelStoreySync(): void {
 // Core sync logic
 // ============================================================================
 
-function syncLevels(prevLevelIds: Set<string>): void {
+function syncLevels(_prevLevelIds: Set<string>): void {
   const state = useAppStore.getState();
-  const { shapes, drawings, projectStructure, addStorey, updateStorey, updateShape } = state;
+  const { shapes, drawings, projectStructure, addStorey, updateShape } = state;
 
   // Build a map of storeyId -> storey + buildingId for quick lookup
   const storeyMap = new Map<string, { buildingId: string; name: string; elevation: number }>();

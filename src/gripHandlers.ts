@@ -816,7 +816,7 @@ const rebarGripHandler: GripHandler = {
     }
     return updates;
   },
-  computeGripUpdate(shape: any, gripIndex: number, newPos: Point) {
+  computeGripUpdate(_shape: any, gripIndex: number, newPos: Point) {
     if (gripIndex === 0) return { position: newPos };
     if (gripIndex === 1) return { endPoint: newPos };
     return null;

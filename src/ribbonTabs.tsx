@@ -696,7 +696,7 @@ function formatFileSize(bytes: number): string {
  * Shows an "Export IFCX" button, a JSON viewer with copy/download,
  * and statistics about the generated IFCX file.
  */
-function IfcxTabContent() {
+export function IfcxTabContent() {
   const [ifcxResult, setIfcxResult] = useState<IfcxGenerationResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);

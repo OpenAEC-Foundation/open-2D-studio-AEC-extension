@@ -323,8 +323,6 @@ function drawBeamPlan(renderCtx: ShapeRenderContext, shape: BeamShape, invertCol
 
   const ctx = renderCtx.ctx;
   const { start, end, showCenterline, showLabel, material } = shape;
-  const startCap = shape.startCap || 'butt';
-  const endCap = shape.endCap || 'butt';
 
   const originalLineWidth = ctx.lineWidth;
   if (material === 'concrete') {
@@ -334,9 +332,6 @@ function drawBeamPlan(renderCtx: ShapeRenderContext, shape: BeamShape, invertCol
   }
 
   const corners = computeBeamCorners(shape);
-
-  const hasStartMiterBeam = startCap === 'miter';
-  const hasEndMiterBeam = endCap === 'miter';
 
   // Left side edge
   ctx.beginPath();
@@ -673,7 +668,7 @@ function drawGridline(renderCtx: ShapeRenderContext, shape: GridlineShape, inver
 // Level
 // ---------------------------------------------------------------------------
 
-function drawLevel(renderCtx: ShapeRenderContext, shape: LevelShape, invertColors: boolean): void {
+function drawLevel(renderCtx: ShapeRenderContext, shape: LevelShape, invertColors: boolean, isSelected?: boolean): void {
   const ctx = renderCtx.ctx;
   const { start, end, label } = shape;
 
@@ -698,8 +693,8 @@ function drawLevel(renderCtx: ShapeRenderContext, shape: LevelShape, invertColor
   ctx.setLineDash([]);
   ctx.lineWidth = origLineWidth;
 
-  let textColor = shape.style.strokeColor;
-  if (invertColors && textColor === '#ffffff') {
+  let textColor = isSelected ? '#00bfff' : shape.style.strokeColor;
+  if (!isSelected && invertColors && textColor === '#ffffff') {
     textColor = '#000000';
   }
 
@@ -1884,9 +1879,6 @@ function drawWall(renderCtx: ShapeRenderContext, shape: WallShape, invertColors:
   const wallAngle = Math.atan2(end.y - start.y, end.x - start.x);
 
   const corners = computeWallCorners(shape);
-
-  const hasStartMiter = shape.startCap === 'miter';
-  const hasEndMiter = shape.endCap === 'miter';
 
   // Collect opening gaps along the wall (as fractions 0..1 of edge length)
   const allShapes = useAppStore.getState().shapes;
@@ -3314,7 +3306,6 @@ function drawRebar(renderCtx: ShapeRenderContext, shape: RebarShape, invertColor
 
   if (viewMode === 'longitudinal' && endPoint) {
     // Longitudinal view: draw as line with end hooks
-    const r = diameter / 2;
     const hookLen = diameter * 3;
 
     ctx.save();
@@ -3433,9 +3424,9 @@ export function registerRenderers(): void {
   });
 
   // --- level ---
-  shapeRendererRegistry.register('level', (_ctx, shape, _isSelected, _isHovered, invertColors, renderCtx) => {
+  shapeRendererRegistry.register('level', (_ctx, shape, isSelected, _isHovered, invertColors, renderCtx) => {
     if (!renderCtx) return;
-    drawLevel(renderCtx, shape as LevelShape, invertColors);
+    drawLevel(renderCtx, shape as LevelShape, invertColors, isSelected);
   });
   shapeRendererRegistry.registerSimple('level', (_ctx, shape, invertColors, renderCtx) => {
     if (!renderCtx) return;
