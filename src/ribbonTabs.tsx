@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Square, Circle, Palette, Settings, Layers, FolderTree, Shapes, FileText, FileBarChart, DoorOpen, CircleDot, Download, Copy, RefreshCw } from 'lucide-react';
+import { Square, Circle, Palette, Settings, Layers, FolderTree, Shapes, FileText, FileBarChart, DoorOpen, CircleDot, Download, Copy, RefreshCw, Package, Library } from 'lucide-react';
 import {
   useAppStore,
   LineIcon, ArcIcon, BeamIcon, GridLineIcon, LevelIcon,
@@ -140,6 +140,53 @@ function PdfUnderlayButton({ disabled }: { disabled?: boolean }) {
         onPlace={handlePlace}
       />
     </>
+  );
+}
+
+/**
+ * Components ribbon group — placed inside the AEC (Structural) tab.
+ * Provides quick access to component creation mode and the component library panel.
+ */
+function ComponentsGroup({ isSheetMode }: { isSheetMode: boolean }) {
+  const handleNewComponent = useCallback(() => {
+    const store = useAppStore.getState();
+    // Enter component editor with a new (unsaved) definition placeholder.
+    // The full creation flow is handled by the component editor dialog.
+    if (typeof (store as any).enterComponentEditor === 'function') {
+      (store as any).enterComponentEditor('__new__');
+    } else {
+      // Fallback: switch to a dedicated drawing tool if registered
+      if (typeof store.switchToDrawingTool === 'function') {
+        store.switchToDrawingTool('component-create' as any);
+      }
+    }
+  }, []);
+
+  const handleToggleLibrary = useCallback(() => {
+    const store = useAppStore.getState();
+    if (typeof (store as any).toggleComponentLibrary === 'function') {
+      (store as any).toggleComponentLibrary();
+    }
+  }, []);
+
+  return (
+    <RibbonGroup label="Components">
+      <RibbonButton
+        icon={<Package size={24} />}
+        label="New Component"
+        onClick={handleNewComponent}
+        disabled={isSheetMode}
+        tooltip="Enter component creation mode to define a new reusable parametric component"
+        shortcut="NC"
+      />
+      <RibbonButton
+        icon={<Library size={24} />}
+        label="Library"
+        onClick={handleToggleLibrary}
+        tooltip="Toggle the component library panel"
+        shortcut="CL"
+      />
+    </RibbonGroup>
   );
 }
 
@@ -512,6 +559,9 @@ function StructuralTabContent() {
           tooltip="Manage IFC project spatial hierarchy (Site / Building / Storey)"
         />
       </RibbonGroup>
+
+      <ComponentsGroup isSheetMode={isSheetMode} />
+
       {renderExtensionButtonsForTab('structural')}
     </div>
   );
@@ -646,7 +696,7 @@ function formatFileSize(bytes: number): string {
  * Shows an "Export IFCX" button, a JSON viewer with copy/download,
  * and statistics about the generated IFCX file.
  */
-function IfcxTabContent() {
+export function IfcxTabContent() {
   const [ifcxResult, setIfcxResult] = useState<IfcxGenerationResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);

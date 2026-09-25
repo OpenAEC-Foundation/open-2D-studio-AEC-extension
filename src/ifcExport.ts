@@ -10,7 +10,6 @@ import type {
   WallShape,
   BeamShape,
   ColumnShape,
-  ColumnMaterial,
   SlabShape,
   PileShape,
   CPTShape,

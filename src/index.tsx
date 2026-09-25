@@ -20,6 +20,7 @@ import { registerRibbonTabs, unregisterRibbonTabs } from './ribbonTabs';
 import { registerIfcCategories, unregisterIfcCategories } from './ifcCategories';
 import { registerWallOpeningTool, unregisterWallOpeningTool } from './wallOpeningTool';
 import { registerRebarTool, unregisterRebarTool } from './rebarTool';
+import { registerComponentSystem, unregisterComponentSystem } from './componentRegistrations';
 
 const aecExtension = {
   onLoad() {
@@ -39,8 +40,10 @@ const aecExtension = {
     registerIfcCategories();
     registerWallOpeningTool();
     registerRebarTool();
+    registerComponentSystem();
   },
   onUnload() {
+    unregisterComponentSystem();
     unregisterRebarTool();
     unregisterWallOpeningTool();
     unregisterIfcCategories();
